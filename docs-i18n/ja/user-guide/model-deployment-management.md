@@ -65,6 +65,10 @@ GPUStack の `Models - Deployments` ページで、モデルのデプロイを�
 
 8. `Save` ボタンをクリックします。
 
+### TOS モデルのデプロイ { #deploying-a-tos-model }
+
+TOS は、重みが Volcengine 互換バケット上の不変リリース（`manifest.json` + `objects/<sha256>/…`）として既にある場合に使います。スケジュールされた **worker** がダウンロードして SHA256 検証し、その後ローカルパスから推論を起動します。座標は `tos_endpoint` / `tos_region` / `tos_bucket` / `tos_model` / `tos_version` / 任意の `tos_release_path`。認証は worker の `TOS_ACCESS_KEY` と `TOS_SECRET_KEY`。アップロードは当面 model-deploy `upload` のままです。
+
 ### バックエンド { #backend }
 
 現在、GPUStack は組み込みバックエンドとして vLLM、SGLang、MindIE、VoxBox をサポートしています。

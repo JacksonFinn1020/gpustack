@@ -4,7 +4,7 @@ You can manage model deployments in GPUStack by navigating to the `Models - Depl
 
 ## Deploy Model
 
-Currently, models from [Hugging Face](https://huggingface.co), [ModelScope](https://modelscope.cn), and local paths are supported.
+Currently, models from [Hugging Face](https://huggingface.co), [ModelScope](https://modelscope.cn), local paths, and Volcengine TOS object storage are supported.
 
 ### Deploying a Hugging Face Model
 
@@ -64,6 +64,55 @@ To deploy a local path model:
 7. Expand the `Advanced` section for advanced configurations if needed. Please refer to the [Advanced Configuration](#advanced-configuration) section for more details.
 
 8. Click the `Save` button.
+
+### Deploying a TOS Model
+
+Use TOS when model weights already live in a Volcengine-compatible bucket as an immutable release (`manifest.json` plus content-addressed `objects/<sha256>/…`). The **assigned worker** downloads and SHA256-verifies that release, then GPUStack starts the inference backend from the local path. Do not treat a download that only reaches the control/server machine as the primary path.
+
+Upload stays outside GPUStack Deploy for now (for example model-deploy `upload`). The Deploy API selects the worker and GPUs; it does not publish weights.
+
+Worker credentials (never store these on the model row or in git):
+
+```bash
+export TOS_ACCESS_KEY=...
+export TOS_SECRET_KEY=...
+# optional
+export TOS_SECURITY_TOKEN=...
+export TOS_PREFIX=lingji-models
+# optional: place files at /data/models/<model>/<version> instead of the GPUStack cache
+export TOS_MODEL_ROOT=/data/models
+```
+
+Install the official `tos` SDK on workers that pull this source.
+
+Create the deployment over the API (`POST /v1/models`) with `source: tos`, TOS coordinates, and a `gpu_selector` (or worker selector) so the scheduler pins the instance to the target server and GPUs:
+
+```yaml
+name: qwen3-tos
+source: tos
+tos_endpoint: https://tos-cn-shanghai.volces.com
+tos_region: cn-shanghai
+tos_bucket: your-bucket
+tos_model: qwen3
+tos_version: v1
+tos_release_path: lingji-models/qwen3/v1   # optional; default is $TOS_PREFIX/model/version
+replicas: 1
+backend: vLLM
+gpu_selector:
+  gpu_ids:
+  - worker-1:cuda:0
+```
+
+`tos_release_path` is the bucket-relative directory that contains `manifest.json`. Placeholders `{model}` and `{version}` are allowed.
+
+Flow:
+
+1. Publish the release to TOS (model-deploy `upload` or an equivalent helper).
+2. Create the model with `source=tos` and choose the worker plus GPUs.
+3. Wait until the worker ModelFile is `ready` (download + SHA verify).
+4. The instance becomes Running from the local tree.
+
+Hugging Face, ModelScope, and `local_path` are unchanged. The UI may not expose a TOS dropdown yet; use the API or an exported YAML.
 
 ### Backend
 
@@ -170,6 +219,7 @@ Every field in the file is something you set on the deploy form. Below is what e
 | `huggingface_repo_id`, `huggingface_filename` | `Repo ID` and `File Name`, for a Hugging Face model |
 | `model_scope_model_id`, `model_scope_file_path` | `Repo ID` and `File Name`, for a ModelScope model |
 | `local_path` | `Model Path`, for a local path model |
+| `tos_endpoint`, `tos_region`, `tos_bucket`, `tos_model`, `tos_version`, `tos_release_path` | TOS coordinates; see [Deploying a TOS Model](#deploying-a-tos-model). Not yet on the deploy form. |
 | `replicas` | `Replicas` |
 | `categories` | [`Model Category`](#model-category) |
 | `placement_strategy` | `Scheduling` → [`Auto`](#auto), the placement strategy |

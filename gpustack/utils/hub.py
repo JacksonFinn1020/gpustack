@@ -70,6 +70,19 @@ def get_model_path_and_name(model: ModelFile) -> (str, str):
         return model.model_scope_model_id, model.model_scope_file_path
     elif model.source == SourceEnum.LOCAL_PATH:
         return model.local_path, ""
+    elif model.source == SourceEnum.TOS:
+        return (
+            "/".join(
+                p
+                for p in (
+                    model.tos_bucket,
+                    model.tos_release_path or model.tos_model,
+                    model.tos_version if not model.tos_release_path else None,
+                )
+                if p
+            ),
+            "",
+        )
     else:
         return "", ""
 
@@ -125,6 +138,7 @@ def match_file_and_calculate_size(
     if selected_files and model.source in [
         SourceEnum.HUGGING_FACE,
         SourceEnum.MODEL_SCOPE,
+        SourceEnum.TOS,
     ]:
         base_dir = model.local_dir or f"{cache_dir}/{model.source.value}/{file_path}"
         selected_files = [os.path.join(base_dir, f) for f in selected_files]
@@ -366,6 +380,7 @@ def read_repo_file_content(  # noqa: C901
             model.huggingface_repo_id
             or model.model_scope_model_id
             or model.local_path
+            or model.readable_source
             or "<unknown>"
         )
         logger.error(f"Failed to read '{file_path}' for source '{source_key}': {e}")
@@ -508,6 +523,15 @@ def get_pretrained_config(model: Model, **kwargs):
             model.local_path,
             local_files_only=True,
         )
+
+    elif model.source == SourceEnum.TOS:
+        # Weights land on the assigned worker after download. The server
+        # only has config when that cache is also mounted here.
+        logger.warning(
+            f"TOS source {model.readable_source} is resolved on the assigned "
+            "worker after download; server-side config inspection is skipped."
+        )
+        return {}
 
     else:
         raise ValueError(f"Unsupported model source: {model.source}")

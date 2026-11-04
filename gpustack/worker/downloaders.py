@@ -2,6 +2,7 @@ import fnmatch
 import logging
 import modelscope
 import os
+from pathlib import Path
 from typing import Callable, List, Optional, Union
 from packaging.version import Version
 from tqdm.contrib.concurrent import thread_map
@@ -23,6 +24,7 @@ from gpustack.utils.hub import (
     FileEntry,
 )
 from gpustack.utils.locks import HeartbeatSoftFileLock
+from gpustack.worker import tos_storage
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +75,13 @@ def download_model(
         )
     elif model.source == SourceEnum.LOCAL_PATH:
         return file.get_sharded_file_paths(model.local_path)
+    elif model.source == SourceEnum.TOS:
+        return TosDownloader.download(
+            model,
+            local_dir=local_dir,
+            cache_dir=cache_dir,
+            progress_callback=huggingface_progress,
+        )
 
 
 def get_model_file_info(
@@ -95,6 +104,8 @@ def get_model_file_info(
             FileEntry(f, file.getsize(f)) for f in sharded_or_original_file_paths
         ]
         return file_list
+    elif model.source == SourceEnum.TOS:
+        return TosDownloader.get_model_file_info(model)
 
     raise ValueError(f"Unsupported model source: {model.source}")
 
@@ -386,3 +397,50 @@ class ModelScopeDownloader:
                 allow_patterns=matching_files,
             )
             return [local_dir]
+
+
+class TosDownloader:
+    """Pull a model-deploy TOS release onto the assigned worker."""
+
+    @classmethod
+    def get_model_file_info(
+        cls,
+        model: ModelSource,
+        client: Optional[tos_storage.TosObjectClient] = None,
+    ) -> List[FileEntry]:
+        location = tos_storage.location_from_source(model)
+        client = client or tos_storage.SdkTosClient(location.endpoint, location.region)
+        manifest = tos_storage.fetch_manifest(location, client)
+        return tos_storage.manifest_file_entries(manifest)
+
+    @classmethod
+    def download(
+        cls,
+        model: ModelSource,
+        local_dir: Optional[Union[str, os.PathLike[str]]] = None,
+        cache_dir: Optional[Union[str, os.PathLike[str]]] = None,
+        client: Optional[tos_storage.TosObjectClient] = None,
+        progress_callback: Optional[Callable[[str, int], None]] = None,
+    ) -> List[str]:
+        location = tos_storage.location_from_source(model)
+        if local_dir:
+            destination = Path(local_dir)
+        else:
+            destination = tos_storage.cache_dir_for(
+                model, str(cache_dir) if cache_dir else None
+            )
+        client = client or tos_storage.SdkTosClient(location.endpoint, location.region)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        lock_filename = str(destination.parent / f"{destination.name}.lock")
+        logger.info(f"Downloading TOS release {location.uri} to {destination}")
+        with HeartbeatSoftFileLock(
+            lock_filename, owner_worker_id=getattr(model, "worker_id", None)
+        ):
+            paths = tos_storage.download_release(
+                location,
+                destination,
+                client,
+                progress_callback=progress_callback,
+            )
+        logger.info(f"Downloaded TOS release {location.uri}")
+        return paths

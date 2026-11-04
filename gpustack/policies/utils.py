@@ -307,12 +307,7 @@ async def estimate_lora_weights_bytes(
             ):
                 lm = Model(
                     name=model.name,
-                    source=src.source,
-                    huggingface_repo_id=src.huggingface_repo_id,
-                    huggingface_filename=src.huggingface_filename,
-                    model_scope_model_id=src.model_scope_model_id,
-                    model_scope_file_path=src.model_scope_file_path,
-                    local_path=src.local_path,
+                    **src.source_create_fields(),
                     categories=model.categories or [],
                     meta={},
                     replicas=1,
@@ -398,12 +393,12 @@ async def estimate_model_vram(
                 asyncio.to_thread(get_model_weight_size, model, token),
                 timeout=timeout_in_seconds,
             )
-        elif model.source == SourceEnum.LOCAL_PATH:
+        elif model.source in (SourceEnum.LOCAL_PATH, SourceEnum.TOS):
             # Try to get cached size from ModelFile first
             cached_size = await _get_cached_model_size(session, model)
             if cached_size:
                 weight_size = cached_size
-            else:
+            elif model.source == SourceEnum.LOCAL_PATH:
                 # Fall back to querying workers
                 weight_size = await get_local_model_weight_size(
                     model.local_path, workers, is_diffusion=False
@@ -468,12 +463,12 @@ async def estimate_diffusion_model_vram(
                 asyncio.to_thread(get_diffusion_model_weight_size, model, token),
                 timeout=timeout_in_seconds,
             )
-        elif model.source == SourceEnum.LOCAL_PATH:
+        elif model.source in (SourceEnum.LOCAL_PATH, SourceEnum.TOS):
             # Try to get cached size from ModelFile first
             cached_size = await _get_cached_model_size(session, model)
             if cached_size:
                 weight_size = cached_size
-            else:
+            elif model.source == SourceEnum.LOCAL_PATH:
                 # Fall back to querying workers with is_diffusion=True
                 weight_size = await get_local_model_weight_size(
                     model.local_path, workers, is_diffusion=True

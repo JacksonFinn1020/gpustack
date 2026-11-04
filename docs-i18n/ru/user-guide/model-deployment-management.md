@@ -69,6 +69,10 @@ translation_status: translated
 
 8. Нажмите кнопку `Save`.
 
+### Развёртывание модели TOS { #deploying-a-tos-model }
+
+Источник TOS используется, когда веса уже лежат в совместимом с Volcengine бакете как неизменяемый релиз (`manifest.json` + `objects/<sha256>/…`). Назначенный **worker** скачивает и проверяет SHA256, затем сервис стартует с локального пути. Поля: `tos_endpoint`, `tos_region`, `tos_bucket`, `tos_model`, `tos_version`, необязательный `tos_release_path`. Учётные данные — `TOS_ACCESS_KEY` / `TOS_SECRET_KEY` на worker. Загрузка в бакет пока остаётся в model-deploy `upload`.
+
 ### Бэкэнд { #backend }
 
 В настоящее время GPUStack поддерживает некоторые встроенные серверные части: vLLM, SGLang, MindIE и VoxBox.

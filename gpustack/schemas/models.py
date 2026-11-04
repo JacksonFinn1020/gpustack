@@ -72,6 +72,7 @@ class SourceEnum(str, Enum):
     HUGGING_FACE = "huggingface"
     MODEL_SCOPE = "model_scope"
     LOCAL_PATH = "local_path"
+    TOS = "tos"
 
 
 class CategoryEnum(str, Enum):
@@ -384,6 +385,39 @@ class ModelSource(BaseModel):
     model_scope_model_id: Optional[str] = None
     model_scope_file_path: Optional[str] = None
     local_path: Optional[str] = None
+    tos_endpoint: Optional[str] = None
+    tos_region: Optional[str] = None
+    tos_bucket: Optional[str] = None
+    tos_model: Optional[str] = None
+    tos_version: Optional[str] = None
+    tos_release_path: Optional[str] = None
+
+    def source_create_fields(self) -> Dict[str, Any]:
+        """Identity fields copied onto ModelInstance / ModelFile rows."""
+        return {
+            "source": self.source,
+            "huggingface_repo_id": self.huggingface_repo_id,
+            "huggingface_filename": self.huggingface_filename,
+            "model_scope_model_id": self.model_scope_model_id,
+            "model_scope_file_path": self.model_scope_file_path,
+            "local_path": self.local_path,
+            "tos_endpoint": self.tos_endpoint,
+            "tos_region": self.tos_region,
+            "tos_bucket": self.tos_bucket,
+            "tos_model": self.tos_model,
+            "tos_version": self.tos_version,
+            "tos_release_path": self.tos_release_path,
+        }
+
+    def _tos_identity(self) -> List[str]:
+        return [
+            self.tos_endpoint or "",
+            self.tos_region or "",
+            self.tos_bucket or "",
+            self.tos_release_path or "",
+            self.tos_model or "",
+            self.tos_version or "",
+        ]
 
     @property
     def model_source_key(self) -> str:
@@ -394,6 +428,8 @@ class ModelSource(BaseModel):
             return self.model_scope_model_id or ""
         elif self.source == SourceEnum.LOCAL_PATH:
             return self.local_path or ""
+        elif self.source == SourceEnum.TOS:
+            return "/".join(v for v in self._tos_identity() if v)
         return ""
 
     @property
@@ -405,6 +441,12 @@ class ModelSource(BaseModel):
             values.extend([self.model_scope_model_id, self.model_scope_file_path])
         elif self.source == SourceEnum.LOCAL_PATH:
             values.extend([self.local_path])
+        elif self.source == SourceEnum.TOS:
+            bucket = self.tos_bucket or ""
+            release = self.tos_release_path or "/".join(
+                p for p in (self.tos_model, self.tos_version) if p
+            )
+            values.extend([f"tos://{bucket}/{release}" if bucket else release])
 
         return "/".join([value for value in values if value is not None])
 
@@ -419,6 +461,8 @@ class ModelSource(BaseModel):
             )
         elif self.source == SourceEnum.LOCAL_PATH:
             values.extend([self.local_path])
+        elif self.source == SourceEnum.TOS:
+            values.extend([self.source.value, *self._tos_identity()])
 
         # Filter out None values and join
         filtered_values = [v for v in values if v is not None]
@@ -444,6 +488,23 @@ class ModelSource(BaseModel):
             if not self.local_path:
                 raise ValueError(
                     "local_path must be provided when source is 'local_path'"
+                )
+        if self.source == SourceEnum.TOS:
+            missing = [
+                name
+                for name, value in (
+                    ("tos_endpoint", self.tos_endpoint),
+                    ("tos_region", self.tos_region),
+                    ("tos_bucket", self.tos_bucket),
+                    ("tos_model", self.tos_model),
+                    ("tos_version", self.tos_version),
+                )
+                if not (value and str(value).strip())
+            ]
+            if missing:
+                raise ValueError(
+                    "tos_endpoint, tos_region, tos_bucket, tos_model and "
+                    "tos_version must be provided when source is 'tos'"
                 )
         return self
 

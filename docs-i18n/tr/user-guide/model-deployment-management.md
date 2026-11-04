@@ -69,6 +69,10 @@ Yerel yol modelini dağıtmak için:
 
 8. `Save` düğmesine tıklayın.
 
+### TOS modelini dağıtma { #deploying-a-tos-model }
+
+Ağırlıklar Volcengine uyumlu bir TOS kovasında değişmez bir sürüm (`manifest.json` + `objects/<sha256>/…`) olarak duruyorsa TOS kaynağını kullanın. Atanan **worker** indirir, SHA256 doğrular ve hizmeti yerel yoldan başlatır. Alanlar: `tos_endpoint`, `tos_region`, `tos_bucket`, `tos_model`, `tos_version`, isteğe bağlı `tos_release_path`. Kimlik bilgileri worker üzerindeki `TOS_ACCESS_KEY` / `TOS_SECRET_KEY`. Kovaya yükleme şimdilik model-deploy `upload` ile kalır.
+
 ### Arka uç { #backend }
 
 Şu anda GPUStack bazı yerleşik arka uçları desteklemektedir: vLLM, SGLang, MindIE ve VoxBox.
