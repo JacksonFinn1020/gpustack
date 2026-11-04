@@ -50,7 +50,7 @@ help:
 	#     model-deploy → GPUStack mapping (no API call).
 	#
 	#   * [dev] `make model-deploy-apply -- --deploy … --catalog …` or
-	#     `--spec …`, POST ModelCreate (needs GPUSTACK_* ; use --dry-run).
+	#     `--spec …`, POST /v2/models (needs GPUSTACK_* ; --dry-run skips HTTP).
 	#
 	#   * [dev] `make build`, execute building.
 	#

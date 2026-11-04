@@ -1,5 +1,6 @@
 {
   "laya-standard": {
+    "runtime": "python-adapter",
     "branch": "origin/laya-standard",
     "dockerfile": "Dockerfile",
     "container_port": 9740,

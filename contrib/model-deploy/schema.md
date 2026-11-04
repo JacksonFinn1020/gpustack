@@ -48,7 +48,7 @@ added by hand before apply.
 | `categories` | string[] | no | Default `["llm"]`. |
 | `enable_model_route` | bool | no | Default `true`. |
 | `description` | string | no | Short provenance string. |
-| `cluster_name` | string | no | YAML import only; not sent on `POST /v2/models`. |
+| `cluster_name` | string | no | YAML import only; not sent on `POST /v2/models` (this tree's management prefix; not OpenAI `GET /v1/models`). |
 
 Omitted on purpose (server-managed or environment-bound): `id`, `cluster_id`,
 `owner_principal_id`, `access_policy`, `ready_replicas`, `revision_history_limit`.

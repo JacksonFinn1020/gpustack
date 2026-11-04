@@ -26,6 +26,9 @@ from bridge import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODELS_PATH = "/v2/models"
+# Management ModelCreate lives under HTTPClient.versioned_prefix (/v2), not
+# the OpenAI-compatible GET /v1/models probe.
+DRY_RUN_SERVER_PLACEHOLDER = "https://gpustack.example.com"
 ENV_SERVER_URL = "GPUSTACK_SERVER_URL"
 ENV_API_KEY = "GPUSTACK_API_KEY"
 
@@ -65,6 +68,22 @@ def default_http_post(
     return response.status_code, payload, response.text
 
 
+def _require_apply_credentials(server_url: str, api_key: str, dry_run: bool) -> None:
+    if dry_run:
+        return
+    if not server_url:
+        raise ApplyError(f"{ENV_SERVER_URL} is required")
+    if not api_key:
+        raise ApplyError(f"{ENV_API_KEY} is required")
+
+
+def _model_create_body(release: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        return apply_body(release)
+    except ConvertError as exc:
+        raise ApplyError(str(exc)) from exc
+
+
 def apply_release(
     release: Dict[str, Any],
     server_url: str,
@@ -79,7 +98,7 @@ def apply_release(
 
     Args:
         release: Bridge document from convert.
-        server_url: GPUStack base URL (no path).
+        server_url: GPUStack base URL (no path). Optional for dry-run.
         api_key: Bearer token. Not required for dry-run.
         dry_run: When true, return the intended request and do not POST.
         models_path: API path (default ``/v2/models``).
@@ -89,12 +108,10 @@ def apply_release(
     Returns:
         API JSON, or a dry-run description.
     """
-    if not server_url:
-        raise ApplyError(f"{ENV_SERVER_URL} is required")
-    if not dry_run and not api_key:
-        raise ApplyError(f"{ENV_API_KEY} is required")
-    body = apply_body(release)
-    url = server_url.rstrip("/") + models_path
+    _require_apply_credentials(server_url, api_key, dry_run)
+    body = _model_create_body(release)
+    base = server_url.rstrip("/") if server_url else DRY_RUN_SERVER_PLACEHOLDER
+    url = base + models_path
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",

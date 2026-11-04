@@ -45,6 +45,6 @@
   },
   "notes": [
     "Place immutable weights at /data/models/vllm-standard/v1 on every target worker (NFS/rsync/model-deploy download). GPUStack does not sync TOS.",
-    "After apply, probe health_path yourself; GPUStack Running is not docs/integrations/integrate-with-model-deploy.md JSON equality."
+    "After apply, probe health_path yourself; GPUStack instance Running is not model-deploy JSON equality (see docs/integrations/integrate-with-model-deploy.md)."
   ]
 }

@@ -70,11 +70,13 @@ id by itself.
    (`gpustack-release.json`) or a deployment YAML document.
 3. **Plan** — print the mapping (name, `local_path`, backend, env keys,
    GPU notes). No API call.
-4. **Apply** — `POST /v2/models` with `GPUSTACK_SERVER_URL` and
+4. **Apply** — `POST /v2/models` (management `ModelCreate`; see
+   [API paths](#gpustack-api-paths)) with `GPUSTACK_SERVER_URL` and
    `GPUSTACK_API_KEY`, or import the YAML in the UI. `--dry-run` prints the
-   body and does not POST.
+   body and does not POST. Dry-run does not need credentials; a real apply
+   does.
 5. **Verify** — GPUStack UI (instance `Running`), playground, and the
-   OpenAI-compatible `/v1/models` (or the catalog `health_path`). Compare
+   OpenAI-compatible `GET /v1/models` (or the catalog `health_path`). Compare
    `health_expect_json` yourself; GPUStack `Running` is not JSON equality.
 
 ```bash
@@ -99,6 +101,19 @@ uv run python contrib/model-deploy/convert.py \
 
 Import that document from **Models → Deployments** (export/import YAML), or
 pass `--export-yaml path.yaml` to `apply.py`.
+
+## GPUStack API paths
+
+This tree versions management routes under `/v2`
+(`gpustack.client.generated_http_client.HTTPClient.versioned_prefix`).
+`ModelClient` calls `/models` on that prefix, so create is **`POST /v2/models`**.
+
+`GET /v1/models` is the OpenAI-compatible listing used as a readiness probe.
+It is not the management create endpoint. Excerpts that say `POST /v1/models`
+for `ModelCreate` describe an older prefix, not this fork.
+
+Override the apply path only with `--models-path` if you point at a different
+GPUStack.
 
 ## Unsupported runtimes (phase 1)
 

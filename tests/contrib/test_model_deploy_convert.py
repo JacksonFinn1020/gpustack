@@ -175,6 +175,40 @@ def test_convert_cli_yaml(tmp_path):
     assert doc["backend"] == "vLLM"
 
 
+@pytest.mark.parametrize(
+    "fixture,model,runtime",
+    [
+        ("custom-http-standard", "custom-http-standard", "custom-http"),
+        ("python-adapter-standard", "laya-standard", "python-adapter"),
+    ],
+)
+def test_unsupported_runtime_cli(caplog, fixture, model, runtime):
+    with caplog.at_level("ERROR"):
+        code = convert_main(
+            [
+                "--deploy",
+                str(FIXTURES / fixture / "deploy.json"),
+                "--catalog",
+                str(FIXTURES / fixture / "model-catalog.json"),
+                "--model",
+                model,
+                "--version",
+                "v1",
+            ]
+        )
+    assert code == 2
+    err = caplog.text
+    assert runtime in err
+    assert "unsupported in phase 1" in err
+    assert "docs/integrations/integrate-with-model-deploy.md" in err
+
+
+def test_catalog_runtime_without_service_is_enough():
+    deploy, catalog, _service = _inputs("python-adapter-standard")
+    with pytest.raises(UnsupportedRuntimeError, match="python-adapter"):
+        convert_release(deploy, catalog, model="laya-standard", version="v1")
+
+
 def test_example_bridge_matches_schema_contract():
     example = (
         Path(__file__).resolve().parents[2]

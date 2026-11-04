@@ -1,5 +1,6 @@
 {
   "custom-http-standard": {
+    "runtime": "custom-http",
     "branch": "origin/custom-http-standard",
     "dockerfile": "Dockerfile",
     "container_port": 9670,

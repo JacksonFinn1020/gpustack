@@ -32,7 +32,9 @@ uv run python contrib/model-deploy/convert.py \
   --version v1 \
   --format json
 
-# Dry-run apply (no HTTP). Real apply needs GPUSTACK_SERVER_URL + GPUSTACK_API_KEY.
+# Dry-run apply (no HTTP, credentials optional). Real apply needs
+# GPUSTACK_SERVER_URL + GPUSTACK_API_KEY and POSTs /v2/models
+# (management ModelCreate; GET /v1/models is the OpenAI probe).
 uv run python contrib/model-deploy/apply.py \
   --deploy tests/fixtures/model_deploy/vllm-standard/deploy.json \
   --catalog tests/fixtures/model_deploy/vllm-standard/model-catalog.json \

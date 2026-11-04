@@ -318,8 +318,8 @@ def _notes(worker: Optional[str], gpus: Optional[str], local_path: str) -> List[
     notes = [
         f"Place immutable weights at {local_path} on every target worker "
         "(NFS/rsync/model-deploy download). GPUStack does not sync TOS.",
-        f"After apply, probe health_path yourself; GPUStack Running is not "
-        f"{PHASE1_DOC} JSON equality.",
+        "After apply, probe health_path yourself; GPUStack instance "
+        f"Running is not model-deploy JSON equality (see {PHASE1_DOC}).",
     ]
     if gpus and not worker:
         notes.append(
@@ -335,6 +335,15 @@ def apply_body(release: Dict[str, Any]) -> Dict[str, Any]:
     body = dict(release.get("model_create") or {})
     for key in APPLY_OMIT_FIELDS:
         body.pop(key, None)
+    missing = [
+        name
+        for name in ("name", "source", "local_path", "backend")
+        if not body.get(name)
+    ]
+    if missing:
+        raise ConvertError("spec model_create missing " + ", ".join(missing))
+    if body.get("source") != "local_path":
+        raise ConvertError("spec model_create.source must be local_path")
     return body
 
 

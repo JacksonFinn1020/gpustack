@@ -125,10 +125,52 @@ def test_redact_bearer_without_knowing_secret():
 
 
 def test_missing_credentials():
+    result = apply_release(_vllm_release(), "", "", dry_run=True)
+    assert result["dry_run"] is True
+    assert result["url"] == "https://gpustack.example.com/v2/models"
     with pytest.raises(ApplyError, match="GPUSTACK_SERVER_URL"):
-        apply_release(_vllm_release(), "", "key", dry_run=True)
+        apply_release(_vllm_release(), "", "key")
     with pytest.raises(ApplyError, match="GPUSTACK_API_KEY"):
         apply_release(_vllm_release(), "https://gpustack.example.com", "")
+
+
+def test_incomplete_spec_does_not_post():
+    calls = []
+
+    def boom(*_args, **_kwargs):
+        calls.append(_args)
+        raise AssertionError("invalid spec must not POST")
+
+    with pytest.raises(ApplyError, match="missing name"):
+        apply_release(
+            {"model_create": {"source": "local_path"}},
+            "https://gpustack.example.com",
+            "secret-token",
+            http_post=boom,
+        )
+    assert calls == []
+
+
+def test_apply_cli_spec_dry_run(capsys, tmp_path, monkeypatch):
+    monkeypatch.delenv("GPUSTACK_API_KEY", raising=False)
+    monkeypatch.delenv("GPUSTACK_SERVER_URL", raising=False)
+    spec = tmp_path / "bridge.json"
+    spec.write_text(
+        (
+            Path(__file__).resolve().parents[2]
+            / "contrib"
+            / "model-deploy"
+            / "examples"
+            / "vllm-bridge.json"
+        ).read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    code = apply_main(["--spec", str(spec), "--dry-run"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "dry_run" in out
+    assert "/v2/models" in out
+    assert "local_path" in out
 
 
 def test_apply_cli_dry_run(capsys, monkeypatch):
