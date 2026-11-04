@@ -46,6 +46,7 @@ from gpustack.routes import (
     clusters,
     cluster_topology,
     token,
+    tos,
     benchmarks,
     benchmark_profiles,
     model_provider,
@@ -257,6 +258,12 @@ model_routers = [
         "router": model_files.router,
         "prefix": "/model-files",
         "tags": ["Model Files"],
+        "dependencies": _org_owner_only,
+    },
+    {
+        "router": tos.router,
+        "prefix": "/tos",
+        "tags": ["TOS"],
         "dependencies": _org_owner_only,
     },
     {
@@ -596,6 +603,7 @@ api_router.include_router(
     cacerts.router, prefix=versioned_prefix, tags=["TLS"], include_in_schema=False
 )
 api_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
+api_router.include_router(tos.ui_router)
 api_router.include_router(
     router=token.router,
     prefix="/token-auth",

@@ -35,7 +35,7 @@ You can add models from a local path. The path can be a directory (e.g., a Huggi
 
 ### Add a TOS Model
 
-Create a model file (or a deployment that creates one) with `source: tos` and the TOS coordinate fields documented in [Model Deployment Management](model-deployment-management.md#deploying-a-tos-model). Select the target worker. GPUStack downloads the immutable release onto that worker; credentials come from `TOS_ACCESS_KEY` / `TOS_SECRET_KEY` on the worker, not from the API payload.
+Ingest the release first (`gpustack tos-ingest` or `POST /v2/tos/releases`), then create a model file (or a deployment that creates one) with `source: tos` and the TOS coordinate fields documented in [Model Deployment Management](model-deployment-management.md#deploying-a-tos-model). Select the target worker. GPUStack downloads the immutable release onto that worker; credentials come from `TOS_ACCESS_KEY` / `TOS_SECRET_KEY` on the worker, not from the API payload. Workers need `pip install tos`.
 
 ## Retry Download
 

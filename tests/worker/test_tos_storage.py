@@ -58,13 +58,35 @@ def _manifest(location, files):
 
 class FakeTos:
     def __init__(self, objects):
-        self.objects = objects
+        self.objects = dict(objects)
 
     def get_object_bytes(self, bucket: str, key: str) -> bytes:
         try:
             return self.objects[key]
         except KeyError as exc:
             raise tos_storage.TosStorageError("missing object") from exc
+
+    def try_get_object_bytes(self, bucket: str, key: str):
+        return self.objects.get(key)
+
+    def object_exists(self, bucket: str, key: str) -> bool:
+        return key in self.objects
+
+    def upload_file(self, bucket: str, key: str, path: Path) -> None:
+        self.objects[key] = Path(path).read_bytes()
+
+    def put_bytes(
+        self,
+        bucket: str,
+        key: str,
+        content: bytes,
+        *,
+        content_type: str = "application/octet-stream",
+        forbid_overwrite: bool = False,
+    ) -> None:
+        if forbid_overwrite and key in self.objects:
+            raise tos_storage.TosStorageError("object exists")
+        self.objects[key] = content
 
     def download_object(self, bucket: str, key: str, dest: Path) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -248,3 +270,70 @@ def test_match_file_uses_tos_cache_dir(tmp_path, monkeypatch):
         files, source, cache_dir=str(tmp_path / "cache")
     )
     assert paths == [str(tmp_path / "data" / "models" / "qwen3" / "v1")]
+
+
+def test_upload_then_download_round_trip(tmp_path):
+    location = _location()
+    src = tmp_path / "snapshot"
+    src.mkdir()
+    (src / "config.json").write_bytes(b'{"architectures":["Qwen3ForCausalLM"]}')
+    (src / "weights.bin").write_bytes(b"fake-weights")
+    client = FakeTos({})
+    published = tos_storage.upload_release(location, src, client)
+    assert published["model"] == "qwen3"
+    assert {entry["path"] for entry in published["files"]} == {
+        "config.json",
+        "weights.bin",
+    }
+    dest = tmp_path / "pulled"
+    paths = tos_storage.download_release(location, dest, client)
+    assert paths == [str(dest)]
+    assert (dest / "weights.bin").read_bytes() == b"fake-weights"
+
+
+def test_upload_rejects_changed_immutable_version(tmp_path):
+    location = _location()
+    first = tmp_path / "a"
+    first.mkdir()
+    (first / "weights.bin").write_bytes(b"one")
+    client = FakeTos({})
+    tos_storage.upload_release(location, first, client)
+    second = tmp_path / "b"
+    second.mkdir()
+    (second / "weights.bin").write_bytes(b"two")
+    with pytest.raises(tos_storage.TosStorageError, match="already published"):
+        tos_storage.upload_release(location, second, client)
+
+
+def test_tos_pretrained_config_reads_local_cache(tmp_path, config):
+    dest = tos_storage.cache_dir_for(_tos_source(), config.cache_dir)
+    dest.mkdir(parents=True)
+    (dest / "config.json").write_text(
+        '{"architectures":["Qwen3ForCausalLM"],"model_type":"qwen3","hidden_size":16}'
+    )
+    model = _tos_model()
+    model.tos_release_path = "lingji-models/qwen3/v1"
+    parsed = hub.get_pretrained_config(model)
+    assert parsed.architectures == ["Qwen3ForCausalLM"]
+    assert parsed.hidden_size == 16
+
+
+def test_scan_skips_release_metadata(tmp_path):
+    location = _location()
+    src = tmp_path / "tree"
+    src.mkdir()
+    (src / "weights.bin").write_bytes(b"w")
+    (src / tos_storage.LOCAL_COMPLETE_NAME).write_text("{}")
+    manifest = tos_storage.scan_local_release(src, location)
+    assert [entry["path"] for entry in manifest["files"]] == ["weights.bin"]
+
+
+def test_upload_is_idempotent_for_same_bytes(tmp_path):
+    location = _location()
+    src = tmp_path / "snap"
+    src.mkdir()
+    (src / "weights.bin").write_bytes(b"same")
+    client = FakeTos({})
+    first = tos_storage.upload_release(location, src, client)
+    again = tos_storage.upload_release(location, src, client)
+    assert first == again

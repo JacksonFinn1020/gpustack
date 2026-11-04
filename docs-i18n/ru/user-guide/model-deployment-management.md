@@ -71,7 +71,7 @@ translation_status: translated
 
 ### Развёртывание модели TOS { #deploying-a-tos-model }
 
-Источник TOS используется, когда веса уже лежат в совместимом с Volcengine бакете как неизменяемый релиз (`manifest.json` + `objects/<sha256>/…`). Назначенный **worker** скачивает и проверяет SHA256, затем сервис стартует с локального пути. Поля: `tos_endpoint`, `tos_region`, `tos_bucket`, `tos_model`, `tos_version`, необязательный `tos_release_path`. Учётные данные — `TOS_ACCESS_KEY` / `TOS_SECRET_KEY` на worker. Загрузка в бакет пока остаётся в model-deploy `upload`.
+TOS — предпочтительный путь: ingest на server (`gpustack tos-ingest` или `POST /v2/tos/releases`, форма `/tos-deploy` с Source=TOS) пишет `manifest.json` + `objects/<sha256>/…`, затем выбирают worker и GPU. Назначенный **worker** скачивает, проверяет SHA256 и стартует с локального пути. Учётные данные — `TOS_ACCESS_KEY` / `TOS_SECRET_KEY` на server и worker. Нужен `pip install tos` (не жёсткая зависимость колеса). Создание: `POST /v2/models`, `source: tos`. HF / ModelScope / `local_path` без изменений.
 
 ### Бэкэнд { #backend }
 

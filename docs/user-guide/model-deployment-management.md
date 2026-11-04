@@ -67,11 +67,9 @@ To deploy a local path model:
 
 ### Deploying a TOS Model
 
-Use TOS when model weights already live in a Volcengine-compatible bucket as an immutable release (`manifest.json` plus content-addressed `objects/<sha256>/…`). The **assigned worker** downloads and SHA256-verifies that release, then GPUStack starts the inference backend from the local path. Do not treat a download that only reaches the control/server machine as the primary path.
+Preferred path: **ingest weights into TOS**, then pick a worker and GPUs in GPUStack. The **assigned worker** downloads and SHA256-verifies the immutable release (`manifest.json` plus content-addressed `objects/<sha256>/…`) and GPUStack starts the backend from that local path. Do not treat a download that only reaches the control/server machine as the primary path.
 
-Upload stays outside GPUStack Deploy for now (for example model-deploy `upload`). The Deploy API selects the worker and GPUs; it does not publish weights.
-
-Worker credentials (never store these on the model row or in git):
+Set the same credential names on the **server** (ingest) and on **workers** that pull (never store these on the model row or in git):
 
 ```bash
 export TOS_ACCESS_KEY=...
@@ -83,9 +81,29 @@ export TOS_PREFIX=lingji-models
 export TOS_MODEL_ROOT=/data/models
 ```
 
-Install the official `tos` SDK on workers that pull this source.
+Install the official Volcengine `tos` Python SDK where ingest or pull runs. It is not a hard dependency of the GPUStack wheel:
 
-Create the deployment over the management API (`POST /v2/models`, the GPUStack client default) with `source: tos`, TOS coordinates, and a `gpu_selector` (or worker selector) so the scheduler pins the instance to the target server and GPUs. That path is not the OpenAI-compatible `GET /v1/models` listing.
+```bash
+pip install tos
+```
+
+Publish a local directory or an on-disk Hugging Face / ModelScope snapshot as an immutable release:
+
+```bash
+gpustack tos-ingest \
+  --local-path /data/snapshots/qwen3 \
+  --tos-endpoint https://tos-cn-shanghai.volces.com \
+  --tos-region cn-shanghai \
+  --tos-bucket your-bucket \
+  --tos-model qwen3 \
+  --tos-version v1
+```
+
+The same job is `POST /v2/tos/releases` (org owner). The response includes a `model_create` payload for `POST /v2/models`. Re-publishing the same version with different bytes is rejected.
+
+Open `/tos-deploy` on the GPUStack server to pick **TOS** in the source dropdown, fill the TOS fields, optionally ingest a server-local directory, and create the deployment with GPU IDs (`gpu_selector`). Hugging Face, ModelScope, and `local_path` remain on the main Deploy form. The packaged `gpustack-ui` tarball is a separate repository; this in-product page is the TOS form shipped with the server.
+
+Create over the management API (`POST /v2/models`, the GPUStack client default) with `source: tos`, TOS coordinates, and a `gpu_selector` (or worker selector) so the scheduler pins the instance to the target server and GPUs. That path is not the OpenAI-compatible `GET /v1/models` listing.
 
 ```yaml
 name: qwen3-tos
@@ -107,12 +125,13 @@ gpu_selector:
 
 Flow:
 
-1. Publish the release to TOS (model-deploy `upload` or an equivalent helper).
-2. Create the model with `source=tos` and choose the worker plus GPUs.
-3. Wait until the worker ModelFile is `ready` (download + SHA verify).
-4. The instance becomes Running from the local tree.
+1. Set `TOS_*` on the server and workers; `pip install tos` there.
+2. Ingest (`gpustack tos-ingest`, `POST /v2/tos/releases`, or `/tos-deploy`).
+3. Create the model with `source=tos` and choose the worker plus GPUs (`/tos-deploy` or `POST /v2/models`).
+4. Wait until the worker ModelFile is `ready` (download + SHA verify).
+5. The instance becomes Running from the local tree. After download, a local `config.json` is used to re-estimate architecture and size when present.
 
-Hugging Face, ModelScope, and `local_path` are unchanged. The UI may not expose a TOS dropdown yet; use the API or an exported YAML.
+Hugging Face, ModelScope, and `local_path` stay available. TOS is the preferred path when weights should land on the assigned worker from object storage.
 
 ### Backend
 
@@ -219,7 +238,7 @@ Every field in the file is something you set on the deploy form. Below is what e
 | `huggingface_repo_id`, `huggingface_filename` | `Repo ID` and `File Name`, for a Hugging Face model |
 | `model_scope_model_id`, `model_scope_file_path` | `Repo ID` and `File Name`, for a ModelScope model |
 | `local_path` | `Model Path`, for a local path model |
-| `tos_endpoint`, `tos_region`, `tos_bucket`, `tos_model`, `tos_version`, `tos_release_path` | TOS coordinates; see [Deploying a TOS Model](#deploying-a-tos-model). Not yet on the deploy form. |
+| `tos_endpoint`, `tos_region`, `tos_bucket`, `tos_model`, `tos_version`, `tos_release_path` | TOS coordinates on `/tos-deploy` and `POST /v2/models`; see [Deploying a TOS Model](#deploying-a-tos-model). |
 | `replicas` | `Replicas` |
 | `categories` | [`Model Category`](#model-category) |
 | `placement_strategy` | `Scheduling` → [`Auto`](#auto), the placement strategy |

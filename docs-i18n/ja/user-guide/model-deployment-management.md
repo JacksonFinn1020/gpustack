@@ -67,7 +67,7 @@ GPUStack の `Models - Deployments` ページで、モデルのデプロイを�
 
 ### TOS モデルのデプロイ { #deploying-a-tos-model }
 
-TOS は、重みが Volcengine 互換バケット上の不変リリース（`manifest.json` + `objects/<sha256>/…`）として既にある場合に使います。スケジュールされた **worker** がダウンロードして SHA256 検証し、その後ローカルパスから推論を起動します。座標は `tos_endpoint` / `tos_region` / `tos_bucket` / `tos_model` / `tos_version` / 任意の `tos_release_path`。認証は worker の `TOS_ACCESS_KEY` と `TOS_SECRET_KEY`。アップロードは当面 model-deploy `upload` のままです。
+TOS は優先経路です。server で `gpustack tos-ingest` または `POST /v2/tos/releases`（`/tos-deploy` の Source=TOS）により `manifest.json` + `objects/<sha256>/…` を公開し、worker と GPU を選ぶと、割り当てられた **worker** が SHA256 検証してからローカルパスで起動します。認証は server/worker の `TOS_ACCESS_KEY` / `TOS_SECRET_KEY`。`pip install tos` が必要です（wheel の必須依存ではありません）。`POST /v2/models`、`source: tos`。HF / ModelScope / `local_path` はそのまま使えます。
 
 ### バックエンド { #backend }
 

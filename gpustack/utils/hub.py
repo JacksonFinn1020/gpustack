@@ -536,13 +536,23 @@ def get_pretrained_config(model: Model, **kwargs):
         )
 
     elif model.source == SourceEnum.TOS:
-        # Weights land on the assigned worker after download. The server
-        # only has config when that cache is also mounted here.
-        logger.warning(
-            f"TOS source {model.readable_source} is resolved on the assigned "
-            "worker after download; server-side config inspection is skipped."
-        )
-        return {}
+        from gpustack.worker.tos_storage import cache_dir_for
+
+        cache = global_config.cache_dir if global_config else None
+        dest = cache_dir_for(model, cache)
+        config_json = dest / "config.json"
+        if dest.is_dir() and config_json.is_file():
+            config_dict, _ = PretrainedConfig.get_config_dict(
+                str(dest),
+                local_files_only=True,
+            )
+        else:
+            logger.warning(
+                f"TOS source {model.readable_source} is resolved on the assigned "
+                "worker after download; server-side config inspection is skipped "
+                "until the release is present locally."
+            )
+            return {}
 
     else:
         raise ValueError(f"Unsupported model source: {model.source}")

@@ -39,7 +39,7 @@ GPUStack 目前支持来自 [Hugging Face](https://huggingface.co)、[ModelScope
 
 ### 添加 TOS 模型 { #add-a-tos-model }
 
-创建模型文件（或由部署自动创建的 ModelFile）时使用 `source: tos` 以及[模型部署管理](model-deployment-management.md#deploying-a-tos-model)中的 TOS 坐标字段，并选择目标 Worker。GPUStack 会把不可变发布下载到该 Worker；凭据来自 worker 上的 `TOS_ACCESS_KEY` / `TOS_SECRET_KEY`，而不是 API 请求体。
+先入库（`gpustack tos-ingest` 或 `POST /v2/tos/releases`），再以 `source: tos` 以及[模型部署管理](model-deployment-management.md#deploying-a-tos-model)中的 TOS 坐标创建模型文件（或由部署自动创建），并选择目标 Worker。GPUStack 会把不可变发布下载到该 Worker；凭据来自 worker 上的 `TOS_ACCESS_KEY` / `TOS_SECRET_KEY`，而不是 API 请求体。Worker 需 `pip install tos`。
 
 ## 重试下载 { #retry-download }
 

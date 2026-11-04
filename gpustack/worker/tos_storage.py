@@ -45,7 +45,23 @@ class TosStorageError(RuntimeError):
 class TosObjectClient(Protocol):
     def get_object_bytes(self, bucket: str, key: str) -> bytes: ...
 
+    def try_get_object_bytes(self, bucket: str, key: str) -> Optional[bytes]: ...
+
     def download_object(self, bucket: str, key: str, dest: Path) -> None: ...
+
+    def object_exists(self, bucket: str, key: str) -> bool: ...
+
+    def upload_file(self, bucket: str, key: str, path: Path) -> None: ...
+
+    def put_bytes(
+        self,
+        bucket: str,
+        key: str,
+        content: bytes,
+        *,
+        content_type: str = "application/octet-stream",
+        forbid_overwrite: bool = False,
+    ) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -260,12 +276,16 @@ class SdkTosClient:
         ak = os.environ.get("TOS_ACCESS_KEY")
         sk = os.environ.get("TOS_SECRET_KEY")
         if not ak or not sk:
-            raise TosStorageError("set TOS_ACCESS_KEY and TOS_SECRET_KEY on the worker")
+            raise TosStorageError(
+                "set TOS_ACCESS_KEY and TOS_SECRET_KEY on the server (ingest) "
+                "and on workers that pull TOS models"
+            )
         try:
             import tos
         except ImportError as exc:
             raise TosStorageError(
-                "the tos SDK is not installed; install it on workers that pull TOS models"
+                "the tos SDK is not installed; pip install tos on the server "
+                "that ingests releases and on workers that pull TOS models"
             ) from exc
         logging.getLogger("tos").setLevel(logging.CRITICAL)
         try:
@@ -282,7 +302,9 @@ class SdkTosClient:
         except Exception as exc:
             raise TosStorageError("failed to initialize the TOS client") from exc
 
-    def get_object_bytes(self, bucket: str, key: str) -> bytes:
+    def _read_object(
+        self, bucket: str, key: str, *, allow_missing: bool
+    ) -> Optional[bytes]:
         try:
             response = self._client.get_object(bucket, key)
             try:
@@ -293,11 +315,22 @@ class SdkTosClient:
                     closer()
         except Exception as exc:
             status = getattr(exc, "status_code", None)
+            if allow_missing and status == 404:
+                return None
             suffix = f" (HTTP {status})" if isinstance(status, int) else ""
             raise TosStorageError(f"failed to read TOS object{suffix}") from None
         if len(raw) > _MAX_MANIFEST:
             raise TosStorageError("object exceeded the 16 MiB in-memory limit")
         return raw
+
+    def get_object_bytes(self, bucket: str, key: str) -> bytes:
+        raw = self._read_object(bucket, key, allow_missing=False)
+        if raw is None:
+            raise TosStorageError("failed to read TOS object")
+        return raw
+
+    def try_get_object_bytes(self, bucket: str, key: str) -> Optional[bytes]:
+        return self._read_object(bucket, key, allow_missing=True)
 
     def download_object(self, bucket: str, key: str, dest: Path) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -308,14 +341,154 @@ class SdkTosClient:
             suffix = f" (HTTP {status})" if isinstance(status, int) else ""
             raise TosStorageError(f"failed to download TOS object{suffix}") from None
 
+    def object_exists(self, bucket: str, key: str) -> bool:
+        try:
+            self._client.head_object(bucket, key)
+        except Exception as exc:
+            if getattr(exc, "status_code", None) == 404:
+                return False
+            status = getattr(exc, "status_code", None)
+            suffix = f" (HTTP {status})" if isinstance(status, int) else ""
+            raise TosStorageError(f"failed to inspect TOS object{suffix}") from None
+        return True
 
-def fetch_manifest(location: TosLocation, client: TosObjectClient) -> Dict[str, Any]:
-    raw = client.get_object_bytes(location.bucket, location.manifest_key)
+    def upload_file(self, bucket: str, key: str, path: Path) -> None:
+        try:
+            self._client.upload_file(bucket, key, str(path))
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            suffix = f" (HTTP {status})" if isinstance(status, int) else ""
+            raise TosStorageError(f"failed to upload TOS object{suffix}") from None
+
+    def put_bytes(
+        self,
+        bucket: str,
+        key: str,
+        content: bytes,
+        *,
+        content_type: str = "application/octet-stream",
+        forbid_overwrite: bool = False,
+    ) -> None:
+        try:
+            self._client.put_object(
+                bucket,
+                key,
+                content=content,
+                content_type=content_type,
+                forbid_overwrite=forbid_overwrite,
+            )
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            suffix = f" (HTTP {status})" if isinstance(status, int) else ""
+            raise TosStorageError(f"failed to write TOS object{suffix}") from None
+
+
+def _parse_manifest(raw: bytes, location: TosLocation) -> Dict[str, Any]:
     try:
         payload = json.loads(raw)
     except ValueError as exc:
         raise TosStorageError("remote manifest is not valid JSON") from exc
     return validate_manifest(payload, location)
+
+
+def fetch_manifest(location: TosLocation, client: TosObjectClient) -> Dict[str, Any]:
+    return _parse_manifest(
+        client.get_object_bytes(location.bucket, location.manifest_key), location
+    )
+
+
+def try_fetch_manifest(
+    location: TosLocation, client: TosObjectClient
+) -> Optional[Dict[str, Any]]:
+    raw = client.try_get_object_bytes(location.bucket, location.manifest_key)
+    if raw is None:
+        return None
+    return _parse_manifest(raw, location)
+
+
+def manifest_bytes(manifest: Dict[str, Any]) -> bytes:
+    return json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def manifest_total_size(manifest: Dict[str, Any]) -> int:
+    return sum(int(entry["size"]) for entry in manifest.get("files") or [])
+
+
+def scan_local_release(local_dir: Path, location: TosLocation) -> Dict[str, Any]:
+    """Build a model-deploy manifest from a local directory or hub snapshot."""
+    root = Path(local_dir).absolute()
+    if root.is_symlink() or not root.is_dir():
+        raise TosStorageError("local model path must be an existing directory")
+    files = []
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            raise TosStorageError("local model directory must not contain symlinks")
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root).as_posix()
+        if relative.split("/")[0] in {MANIFEST_NAME, LOCAL_COMPLETE_NAME, _TEMP}:
+            continue
+        relative = _relative(relative)
+        digest = sha256_file(path)
+        files.append(
+            {
+                "path": relative,
+                "size": path.stat().st_size,
+                "sha256": digest,
+                "object_key": object_key_for(location.release_path, digest, relative),
+            }
+        )
+    return validate_manifest(
+        {
+            "schema_version": 1,
+            "model": location.model,
+            "version": location.version,
+            "files": files,
+        },
+        location,
+    )
+
+
+def upload_release(
+    location: TosLocation,
+    local_dir: Path,
+    client: TosObjectClient,
+) -> Dict[str, Any]:
+    """Publish an immutable TOS release. Same version + different bytes is rejected."""
+    root = Path(local_dir).absolute()
+    manifest = scan_local_release(root, location)
+    raw = manifest_bytes(manifest)
+    if len(raw) > _MAX_MANIFEST:
+        raise TosStorageError("manifest exceeded the 16 MiB limit")
+    previous = try_fetch_manifest(location, client)
+    if previous is not None:
+        if previous != manifest:
+            raise TosStorageError(
+                "this model version is already published with different files; "
+                "use a new tos_version"
+            )
+        return previous
+    for entry in manifest["files"]:
+        if client.object_exists(location.bucket, entry["object_key"]):
+            continue
+        client.upload_file(
+            location.bucket, entry["object_key"], _safe_path(root, entry["path"])
+        )
+    try:
+        client.put_bytes(
+            location.bucket,
+            location.manifest_key,
+            raw,
+            content_type="application/json",
+            forbid_overwrite=True,
+        )
+    except TosStorageError:
+        actual = try_fetch_manifest(location, client)
+        if actual != manifest:
+            raise TosStorageError(
+                "failed to publish manifest, or another writer took this version"
+            ) from None
+    return manifest
 
 
 def _file_matches(path: Path, entry: Dict[str, Any]) -> bool:

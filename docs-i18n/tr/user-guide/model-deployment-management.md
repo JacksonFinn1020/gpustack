@@ -71,7 +71,7 @@ Yerel yol modelini dağıtmak için:
 
 ### TOS modelini dağıtma { #deploying-a-tos-model }
 
-Ağırlıklar Volcengine uyumlu bir TOS kovasında değişmez bir sürüm (`manifest.json` + `objects/<sha256>/…`) olarak duruyorsa TOS kaynağını kullanın. Atanan **worker** indirir, SHA256 doğrular ve hizmeti yerel yoldan başlatır. Alanlar: `tos_endpoint`, `tos_region`, `tos_bucket`, `tos_model`, `tos_version`, isteğe bağlı `tos_release_path`. Kimlik bilgileri worker üzerindeki `TOS_ACCESS_KEY` / `TOS_SECRET_KEY`. Kovaya yükleme şimdilik model-deploy `upload` ile kalır.
+TOS tercih edilen yoldur: server’da `gpustack tos-ingest` veya `POST /v2/tos/releases` (`/tos-deploy`, Source=TOS) `manifest.json` + `objects/<sha256>/…` yayınlar; worker ve GPU seçilir. Atanan **worker** indirir, SHA256 doğrular ve yerel yoldan başlatır. Kimlik bilgileri server/worker’daki `TOS_ACCESS_KEY` / `TOS_SECRET_KEY`. `pip install tos` gerekir (wheel zorunlu bağımlılığı değildir). Oluşturma: `POST /v2/models`, `source: tos`. HF / ModelScope / `local_path` aynı kalır.
 
 ### Arka uç { #backend }
 
