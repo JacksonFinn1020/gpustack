@@ -11,6 +11,7 @@ from gpustack.schemas.models import (
     ModelSource,
     SourceEnum,
 )
+from gpustack.policies import utils as policy_utils
 from gpustack.scheduler.evaluator import evaluate_model_metadata
 from gpustack.scheduler.scheduler import evaluate_pretrained_config
 from gpustack.utils import hub
@@ -316,6 +317,25 @@ def test_tos_pretrained_config_reads_local_cache(tmp_path, config):
     parsed = hub.get_pretrained_config(model)
     assert parsed.architectures == ["Qwen3ForCausalLM"]
     assert parsed.hidden_size == 16
+    assert hub.read_repo_file_content(model, "config.json")["model_type"] == "qwen3"
+
+
+@pytest.mark.asyncio
+async def test_tos_vram_uses_manifest_size(monkeypatch):
+    monkeypatch.setattr(
+        downloaders.TosDownloader,
+        "get_model_file_info",
+        classmethod(
+            lambda cls, model, client=None: [
+                hub.FileEntry("weights.bin", 5 * 1024**3),
+                hub.FileEntry("config.json", 128),
+            ]
+        ),
+    )
+    size = await policy_utils._weight_size_without_cache(
+        _tos_model(), workers=None, is_diffusion=False
+    )
+    assert size == 5 * 1024**3 + 128
 
 
 def test_scan_skips_release_metadata(tmp_path):

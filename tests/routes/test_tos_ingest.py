@@ -47,6 +47,7 @@ def test_ingest_api_returns_model_create_payload(tmp_path):
     assert result.source.value == "tos"
     assert result.model_create["source"] == "tos"
     assert result.model_create["tos_release_path"] == "lingji-models/qwen3/v1"
+    assert not any("secret" in key or "access" in key for key in result.model_create)
     assert result.files == ["config.json"]
     assert result.uri == "tos://models/lingji-models/qwen3/v1"
     dest = tmp_path / "pulled"
@@ -64,6 +65,29 @@ def test_ingest_api_returns_model_create_payload(tmp_path):
     paths = tos_storage.download_release(location, dest, client)
     assert paths == [str(dest)]
     assert (dest / "config.json").read_text() == (src / "config.json").read_text()
+
+
+def test_ingest_rejects_changed_bytes_for_same_version(tmp_path):
+    first = tmp_path / "one"
+    first.mkdir()
+    (first / "weights.bin").write_bytes(b"one")
+    req = TosIngestRequest(
+        local_path=str(first),
+        tos_endpoint="https://tos-cn-shanghai.volces.com",
+        tos_region="cn-shanghai",
+        tos_bucket="models",
+        tos_model="qwen3",
+        tos_version="v1",
+    )
+    client = FakeTos({})
+    ingest_release(req, client=client)
+    second = tmp_path / "two"
+    second.mkdir()
+    (second / "weights.bin").write_bytes(b"two")
+    req.local_path = str(second)
+    with pytest.raises(InvalidException) as exc_info:
+        ingest_release(req, client=client)
+    assert "already published" in exc_info.value.message
 
 
 def test_ingest_rejects_missing_directory(tmp_path):
@@ -91,9 +115,16 @@ def test_tos_deploy_page_lists_source_dropdown():
     assert page.status_code == 200
     assert "TOS model source" in page.text
     assert 'id="source"' in page.text
+    assert 'value="tos"' in page.text
+    assert 'data-tos="tos_endpoint"' in page.text
+    assert 'data-tos="tos_version"' in page.text
     assert "gpu_ids" in page.text
     assert "gpu_selector" in page.text
     assert "modelCreateFromForm" in page.text
+    assert 'API + "/models"' in page.text
+    assert "Hugging Face, ModelScope, and local_path stay on the main Deploy form" in (
+        page.text
+    )
     listed = client.get("/v2/tos/sources")
     assert listed.status_code == 200
     assert any(item["source"] == "tos" for item in listed.json()["items"])

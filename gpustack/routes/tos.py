@@ -122,6 +122,28 @@ def _location(req: TosIngestRequest) -> tos_storage.TosLocation:
     return tos_storage.location_from_source(source)
 
 
+def _source_options_html() -> str:
+    options = []
+    for item in model_sources():
+        selected = " selected" if item["source"] == SourceEnum.TOS.value else ""
+        options.append(
+            f'<option value="{item["source"]}"{selected}>{item["label"]}</option>'
+        )
+    return "\n      ".join(options)
+
+
+def _tos_fields_html() -> str:
+    parts = []
+    for field in TOS_SOURCE_FIELDS:
+        required = " *" if field["required"] else ""
+        placeholder = field.get("placeholder") or ""
+        parts.append(
+            f'<label>{field["label"]}{required}</label>'
+            f'<input data-tos="{field["name"]}" placeholder="{placeholder}"/>'
+        )
+    return "\n  ".join(parts)
+
+
 def ingest_release(
     req: TosIngestRequest,
     client: Optional[tos_storage.TosObjectClient] = None,
@@ -174,7 +196,17 @@ async def create_tos_release(req: TosIngestRequest):
 
 @ui_router.get("/tos-deploy", include_in_schema=False)
 async def tos_deploy_page():
-    return HTMLResponse(_TOS_DEPLOY_HTML)
+    return HTMLResponse(_tos_deploy_html())
+
+
+def _tos_deploy_html() -> str:
+    return _TOS_DEPLOY_HTML.replace(
+        "__SOURCE_OPTIONS__",
+        _source_options_html(),
+    ).replace(
+        "__TOS_FIELDS__",
+        _tos_fields_html(),
+    )
 
 
 _TOS_DEPLOY_HTML = """<!DOCTYPE html>
@@ -206,8 +238,12 @@ _TOS_DEPLOY_HTML = """<!DOCTYPE html>
     dropdown. Credentials are the server/worker <code>TOS_*</code> env vars.
   </p>
   <label>Source</label>
-  <select id="source"></select>
-  <div id="tos-fields"></div>
+  <select id="source">
+      __SOURCE_OPTIONS__
+  </select>
+  <div id="tos-fields">
+  __TOS_FIELDS__
+  </div>
   <label>Local directory on this server</label>
   <input id="local_path" placeholder="/data/snapshots/qwen3"/>
   <label>Deployment name (optional, for create)</label>
@@ -235,20 +271,23 @@ _TOS_DEPLOY_HTML = """<!DOCTYPE html>
       });
       return body;
     }
-    async function loadSources() {
-      const res = await fetch(API + "/tos/sources", {headers: headers()});
-      const data = await res.json();
+    function fillSources(items) {
       const sel = document.getElementById("source");
+      const current = sel.value || "tos";
       sel.innerHTML = "";
-      (data.items || []).forEach((item) => {
+      (items || []).forEach((item) => {
         const opt = document.createElement("option");
         opt.value = item.source;
         opt.textContent = item.label;
-        if (item.source === "tos") opt.selected = true;
+        if (item.source === current) opt.selected = true;
         sel.appendChild(opt);
       });
-      const tos = (data.items || []).find((i) => i.source === "tos") || {fields: []};
+      const tos = (items || []).find((i) => i.source === "tos") || {fields: []};
       const box = document.getElementById("tos-fields");
+      const previous = {};
+      document.querySelectorAll("[data-tos]").forEach((el) => {
+        previous[el.dataset.tos] = el.value;
+      });
       box.innerHTML = "";
       (tos.fields || []).forEach((f) => {
         const lab = document.createElement("label");
@@ -256,9 +295,16 @@ _TOS_DEPLOY_HTML = """<!DOCTYPE html>
         const input = document.createElement("input");
         input.dataset.tos = f.name;
         input.placeholder = f.placeholder || "";
+        if (previous[f.name]) input.value = previous[f.name];
         box.appendChild(lab);
         box.appendChild(input);
       });
+    }
+    async function loadSources() {
+      const res = await fetch(API + "/tos/sources", {headers: headers()});
+      if (!res.ok) return;
+      const data = await res.json();
+      fillSources(data.items || []);
     }
     async function ingest() {
       out.textContent = "ingesting…";
@@ -288,11 +334,18 @@ _TOS_DEPLOY_HTML = """<!DOCTYPE html>
     document.getElementById("create").onclick = async () => {
       try {
         out.className = "";
+        const source = document.getElementById("source").value;
+        if (source && source !== "tos") {
+          throw new Error(
+            "Hugging Face, ModelScope, and local_path stay on the main Deploy form"
+          );
+        }
         const local = document.getElementById("local_path").value.trim();
         const published = local
           ? await ingest()
           : {model_create: modelCreateFromForm(), tos_model: tosBody().tos_model};
-        const gpuIds = document.getElementById("gpu_ids").value.split(/\\s+/).filter(Boolean);
+        const gpuIds = document.getElementById("gpu_ids").value
+          .split(/[\\s,]+/).filter(Boolean);
         const payload = Object.assign({
           name: document.getElementById("name").value.trim() || published.tos_model,
           replicas: 1,
@@ -309,7 +362,10 @@ _TOS_DEPLOY_HTML = """<!DOCTYPE html>
         out.className = "err"; out.textContent = String(e);
       }
     };
-    loadSources().catch((e) => { out.className = "err"; out.textContent = String(e); });
+    document.getElementById("token").addEventListener("change", () => {
+      loadSources().catch(() => {});
+    });
+    loadSources().catch(() => {});
   </script>
 </body>
 </html>

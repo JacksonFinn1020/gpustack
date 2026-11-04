@@ -384,6 +384,16 @@ def read_repo_file_content(  # noqa: C901
                     return json.load(f)
 
             return None
+        elif model.source == SourceEnum.TOS:
+            from gpustack.worker.tos_storage import cache_dir_for
+
+            _cfg = get_global_config()
+            dest = cache_dir_for(model, _cfg.cache_dir if _cfg else None)
+            fp = dest / file_path
+            if fp.is_file() and not fp.is_symlink():
+                with fp.open("r", encoding="utf-8") as f:
+                    return json.load(f)
+            return None
         else:
             return None
     except Exception as e:
