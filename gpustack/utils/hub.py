@@ -104,6 +104,17 @@ def match_file_and_calculate_size(
     file_path, filename = get_model_path_and_name(model)
     extra_filename = get_mmproj_filename(model)
 
+    if model.source == SourceEnum.TOS:
+        from gpustack.worker import tos_storage
+
+        base_dir = getattr(model, "local_dir", None) or str(
+            tos_storage.cache_dir_for(model, cache_dir)
+        )
+        return (
+            sum(f.size for f in files if getattr(f, 'size', None) is not None),
+            [base_dir],
+        )
+
     if file_path and not filename:
         base_dir = model.local_dir or f"{cache_dir}/{model.source.value}/{file_path}"
         return (

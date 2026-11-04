@@ -89,7 +89,7 @@ export TOS_MODEL_ROOT=/data/models
 
 在会拉取 TOS 源的 worker 上安装官方 `tos` SDK。
 
-通过 API（`POST /v1/models`）创建部署：`source: tos`、TOS 坐标，以及 `gpu_selector`（或 worker 选择器），以便调度到目标服务器和 GPU：
+通过管理 API（`POST /v2/models`，GPUStack 客户端默认前缀）创建部署：`source: tos`、TOS 坐标，以及 `gpu_selector`（或 worker 选择器），以便调度到目标服务器和 GPU。这与兼容 OpenAI 的 `GET /v1/models` 列表接口不是同一条路径。
 
 ```yaml
 name: qwen3-tos

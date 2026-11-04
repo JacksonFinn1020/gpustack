@@ -85,7 +85,7 @@ export TOS_MODEL_ROOT=/data/models
 
 Install the official `tos` SDK on workers that pull this source.
 
-Create the deployment over the API (`POST /v1/models`) with `source: tos`, TOS coordinates, and a `gpu_selector` (or worker selector) so the scheduler pins the instance to the target server and GPUs:
+Create the deployment over the management API (`POST /v2/models`, the GPUStack client default) with `source: tos`, TOS coordinates, and a `gpu_selector` (or worker selector) so the scheduler pins the instance to the target server and GPUs. That path is not the OpenAI-compatible `GET /v1/models` listing.
 
 ```yaml
 name: qwen3-tos

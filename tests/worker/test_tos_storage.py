@@ -4,7 +4,16 @@ from pathlib import Path
 
 import pytest
 
-from gpustack.schemas.models import ModelSource, SourceEnum
+from gpustack.schemas.models import (
+    BackendEnum,
+    CategoryEnum,
+    Model,
+    ModelSource,
+    SourceEnum,
+)
+from gpustack.scheduler.evaluator import evaluate_model_metadata
+from gpustack.scheduler.scheduler import evaluate_pretrained_config
+from gpustack.utils import hub
 from gpustack.worker import downloaders, tos_storage
 
 
@@ -192,3 +201,50 @@ def test_unsupported_source_still_rejected():
 
     with pytest.raises(ValueError, match="Unsupported model source"):
         downloaders.get_model_file_info(Other())
+
+
+def _tos_model() -> Model:
+    return Model(
+        name="qwen3-tos",
+        source=SourceEnum.TOS,
+        tos_endpoint="https://tos-cn-shanghai.volces.com",
+        tos_region="cn-shanghai",
+        tos_bucket="models",
+        tos_model="qwen3",
+        tos_version="v1",
+        backend=BackendEnum.VLLM,
+    )
+
+
+@pytest.mark.asyncio
+async def test_tos_evaluate_pretrained_config_skips_server_architecture():
+    model = _tos_model()
+    updated = await evaluate_pretrained_config(model)
+    assert updated is True
+    assert model.categories == [CategoryEnum.LLM]
+
+
+@pytest.mark.asyncio
+async def test_tos_evaluate_model_metadata_is_compatible(config):
+    compatible, messages = await evaluate_model_metadata(config, _tos_model(), [])
+    assert compatible is True
+    assert messages == []
+
+
+def test_match_file_uses_tos_cache_dir(tmp_path, monkeypatch):
+    source = _tos_source()
+    dest = tos_storage.cache_dir_for(source, str(tmp_path / "cache"))
+    files = [
+        hub.FileEntry("weights.bin", 11, sha256="a" * 64),
+    ]
+    size, paths = hub.match_file_and_calculate_size(
+        files, source, cache_dir=str(tmp_path / "cache")
+    )
+    assert size == 11
+    assert paths == [str(dest)]
+
+    monkeypatch.setenv("TOS_MODEL_ROOT", str(tmp_path / "data" / "models"))
+    size, paths = hub.match_file_and_calculate_size(
+        files, source, cache_dir=str(tmp_path / "cache")
+    )
+    assert paths == [str(tmp_path / "data" / "models" / "qwen3" / "v1")]
