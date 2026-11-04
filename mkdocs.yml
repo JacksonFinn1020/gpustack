@@ -247,6 +247,7 @@ nav:
           - Integrate with MaxKB: integrations/integrate-with-maxkb.md
           - Integrate with NewAPI: integrations/integrate-with-newapi.md
           - Integrate with LiteLLM: integrations/integrate-with-litellm.md
+          - Integrate with model-deploy: integrations/integrate-with-model-deploy.md
       - Architecture: architecture.md
       - Scheduler: scheduler.md
       - Troubleshooting: troubleshooting.md

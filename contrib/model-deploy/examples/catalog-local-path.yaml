@@ -1,0 +1,14 @@
+# Example GPUStack model-catalog fragment for an air-gapped lingji weight tree.
+# Point --model-catalog-file at a file that includes a spec like this.
+# GPUStack does not copy the directory; mount or rsync it onto workers first.
+model_sets:
+  - name: vllm-standard
+    description: Example local_path catalog entry produced beside model-deploy weights.
+    categories:
+      - llm
+    specs:
+      - mode: standard
+        source: local_path
+        local_path: /data/models/vllm-standard/v1
+        backend: vLLM
+        backend_parameters: []

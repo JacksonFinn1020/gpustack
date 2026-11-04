@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "name": "vllm-standard",
+  "runtime": "vllm",
+  "host": "0.0.0.0",
+  "port": 8000,
+  "model_path": "/data/model",
+  "device": "cuda:0",
+  "served_model_name": "vllm-standard",
+  "tensor_parallel_size": 1,
+  "extra_args": [],
+  "custom": {
+    "command": [],
+    "environment": {}
+  },
+  "health": {
+    "path": "/v1/models",
+    "expect_json": {
+      "object": "list"
+    },
+    "require_nonempty_data": true
+  }
+}
