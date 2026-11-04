@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "source_kind": "model-deploy",
+  "model_deploy": {
+    "model": "vllm-standard",
+    "version": "v1",
+    "runtime": "vllm",
+    "served_model_name": "vllm-standard",
+    "model_root": "/data/models",
+    "physical_gpus": "0"
+  },
+  "model_create": {
+    "name": "vllm-standard",
+    "source": "local_path",
+    "local_path": "/data/models/vllm-standard/v1",
+    "backend": "vLLM",
+    "backend_parameters": [],
+    "env": {
+      "MODEL_PATH": "/data/model",
+      "MODEL_NAME": "vllm-standard",
+      "SERVICE_HOST": "0.0.0.0",
+      "SERVICE_PORT": "8000",
+      "MODEL_DEVICE": "cuda:0",
+      "HF_HUB_OFFLINE": "1",
+      "TRANSFORMERS_OFFLINE": "1"
+    },
+    "replicas": 1,
+    "categories": [
+      "llm"
+    ],
+    "enable_model_route": true,
+    "description": "Converted from model-deploy vllm-standard@v1 (vllm)",
+    "gpu_selector": {
+      "gpu_ids": [
+        "gpu-worker-a:cuda:0"
+      ]
+    }
+  },
+  "probe": {
+    "health_path": "/v1/models",
+    "health_expect_json": {
+      "object": "list"
+    },
+    "health_require_nonempty_data": true
+  },
+  "notes": [
+    "Place immutable weights at /data/models/vllm-standard/v1 on every target worker (NFS/rsync/model-deploy download). GPUStack does not sync TOS.",
+    "After apply, probe health_path yourself; GPUStack Running is not docs/integrations/integrate-with-model-deploy.md JSON equality."
+  ]
+}
