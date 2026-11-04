@@ -4,7 +4,7 @@ You can manage model deployments in GPUStack by navigating to the `Models - Depl
 
 ## Deploy Model
 
-Currently, models from [Hugging Face](https://huggingface.co), [ModelScope](https://modelscope.cn), and local paths are supported.
+Currently, models from [Hugging Face](https://huggingface.co), [ModelScope](https://modelscope.cn), local paths, and Volcengine TOS object storage are supported.
 
 ### Deploying a Hugging Face Model
 
@@ -64,6 +64,74 @@ To deploy a local path model:
 7. Expand the `Advanced` section for advanced configurations if needed. Please refer to the [Advanced Configuration](#advanced-configuration) section for more details.
 
 8. Click the `Save` button.
+
+### Deploying a TOS Model
+
+Preferred path: **ingest weights into TOS**, then pick a worker and GPUs in GPUStack. The **assigned worker** downloads and SHA256-verifies the immutable release (`manifest.json` plus content-addressed `objects/<sha256>/…`) and GPUStack starts the backend from that local path. Do not treat a download that only reaches the control/server machine as the primary path.
+
+Set the same credential names on the **server** (ingest) and on **workers** that pull (never store these on the model row or in git):
+
+```bash
+export TOS_ACCESS_KEY=...
+export TOS_SECRET_KEY=...
+# optional
+export TOS_SECURITY_TOKEN=...
+export TOS_PREFIX=lingji-models
+# optional: place files at /data/models/<model>/<version> instead of the GPUStack cache
+export TOS_MODEL_ROOT=/data/models
+```
+
+Install the official Volcengine `tos` Python SDK where ingest or pull runs. It is not a hard dependency of the GPUStack wheel:
+
+```bash
+pip install tos
+```
+
+Publish a local directory or an on-disk Hugging Face / ModelScope snapshot as an immutable release:
+
+```bash
+gpustack tos-ingest \
+  --local-path /data/snapshots/qwen3 \
+  --tos-endpoint https://tos-cn-shanghai.volces.com \
+  --tos-region cn-shanghai \
+  --tos-bucket your-bucket \
+  --tos-model qwen3 \
+  --tos-version v1
+```
+
+The same job is `POST /v2/tos/releases` (org owner). The response includes a `model_create` payload for `POST /v2/models`. Re-publishing the same version with different bytes is rejected.
+
+Open `/tos-deploy` on the GPUStack server to pick **TOS** in the source dropdown, fill the TOS fields, optionally ingest a server-local directory, and create the deployment with GPU IDs (`gpu_selector`). Hugging Face, ModelScope, and `local_path` remain on the main Deploy form. The packaged `gpustack-ui` tarball is a separate repository; this in-product page is the TOS form shipped with the server.
+
+Create over the management API (`POST /v2/models`, the GPUStack client default) with `source: tos`, TOS coordinates, and a `gpu_selector` (or worker selector) so the scheduler pins the instance to the target server and GPUs. That path is not the OpenAI-compatible `GET /v1/models` listing.
+
+```yaml
+name: qwen3-tos
+source: tos
+tos_endpoint: https://tos-cn-shanghai.volces.com
+tos_region: cn-shanghai
+tos_bucket: your-bucket
+tos_model: qwen3
+tos_version: v1
+tos_release_path: lingji-models/qwen3/v1   # optional; default is $TOS_PREFIX/model/version
+replicas: 1
+backend: vLLM
+gpu_selector:
+  gpu_ids:
+  - worker-1:cuda:0
+```
+
+`tos_release_path` is the bucket-relative directory that contains `manifest.json`. Placeholders `{model}` and `{version}` are allowed.
+
+Flow:
+
+1. Set `TOS_*` on the server and workers; `pip install tos` there.
+2. Ingest (`gpustack tos-ingest`, `POST /v2/tos/releases`, or `/tos-deploy`).
+3. Create the model with `source=tos` and choose the worker plus GPUs (`/tos-deploy` or `POST /v2/models`).
+4. Wait until the worker ModelFile is `ready` (download + SHA verify).
+5. The instance becomes Running from the local tree. After download, a local `config.json` is used to re-estimate architecture and size when present.
+
+Hugging Face, ModelScope, and `local_path` stay available. TOS is the preferred path when weights should land on the assigned worker from object storage.
 
 ### Backend
 
@@ -170,6 +238,7 @@ Every field in the file is something you set on the deploy form. Below is what e
 | `huggingface_repo_id`, `huggingface_filename` | `Repo ID` and `File Name`, for a Hugging Face model |
 | `model_scope_model_id`, `model_scope_file_path` | `Repo ID` and `File Name`, for a ModelScope model |
 | `local_path` | `Model Path`, for a local path model |
+| `tos_endpoint`, `tos_region`, `tos_bucket`, `tos_model`, `tos_version`, `tos_release_path` | TOS coordinates on `/tos-deploy` and `POST /v2/models`; see [Deploying a TOS Model](#deploying-a-tos-model). |
 | `replicas` | `Replicas` |
 | `categories` | [`Model Category`](#model-category) |
 | `placement_strategy` | `Scheduling` → [`Auto`](#auto), the placement strategy |

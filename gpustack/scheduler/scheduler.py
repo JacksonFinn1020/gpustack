@@ -1304,8 +1304,8 @@ async def evaluate_pretrained_config(
             )
 
         architectures = getattr(pretrained_config, "architectures", []) or []
-        if not architectures and not model.backend_version and not model.image_name:
-            raise ValueError(f"Unrecognized architecture. {UNSUPPORTED_MODEL_REMEDY}")
+        if _reject_or_defer_missing_architecture(model, architectures):
+            return True
 
     model_type = detect_model_type(architectures)
 
@@ -1472,6 +1472,16 @@ def get_vllm_override_architectures(model: Model) -> List[str]:
         if isinstance(architectures, list):
             return architectures
     return []
+
+
+def _reject_or_defer_missing_architecture(model: Model, architectures: List) -> bool:
+    """Refuse an empty config, except TOS whose files land after worker download."""
+    if architectures or model.backend_version or model.image_name:
+        return False
+    if model.source == SourceEnum.TOS:
+        model.categories = model.categories or [CategoryEnum.LLM]
+        return True
+    raise ValueError(f"Unrecognized architecture. {UNSUPPORTED_MODEL_REMEDY}")
 
 
 def should_skip_architecture_check(model: Model) -> bool:

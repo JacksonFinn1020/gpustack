@@ -70,6 +70,19 @@ def get_model_path_and_name(model: ModelFile) -> (str, str):
         return model.model_scope_model_id, model.model_scope_file_path
     elif model.source == SourceEnum.LOCAL_PATH:
         return model.local_path, ""
+    elif model.source == SourceEnum.TOS:
+        return (
+            "/".join(
+                p
+                for p in (
+                    model.tos_bucket,
+                    model.tos_release_path or model.tos_model,
+                    model.tos_version if not model.tos_release_path else None,
+                )
+                if p
+            ),
+            "",
+        )
     else:
         return "", ""
 
@@ -90,6 +103,17 @@ def match_file_and_calculate_size(
 
     file_path, filename = get_model_path_and_name(model)
     extra_filename = get_mmproj_filename(model)
+
+    if model.source == SourceEnum.TOS:
+        from gpustack.worker import tos_storage
+
+        base_dir = getattr(model, "local_dir", None) or str(
+            tos_storage.cache_dir_for(model, cache_dir)
+        )
+        return (
+            sum(f.size for f in files if getattr(f, 'size', None) is not None),
+            [base_dir],
+        )
 
     if file_path and not filename:
         base_dir = model.local_dir or f"{cache_dir}/{model.source.value}/{file_path}"
@@ -125,6 +149,7 @@ def match_file_and_calculate_size(
     if selected_files and model.source in [
         SourceEnum.HUGGING_FACE,
         SourceEnum.MODEL_SCOPE,
+        SourceEnum.TOS,
     ]:
         base_dir = model.local_dir or f"{cache_dir}/{model.source.value}/{file_path}"
         selected_files = [os.path.join(base_dir, f) for f in selected_files]
@@ -359,6 +384,16 @@ def read_repo_file_content(  # noqa: C901
                     return json.load(f)
 
             return None
+        elif model.source == SourceEnum.TOS:
+            from gpustack.worker.tos_storage import cache_dir_for
+
+            _cfg = get_global_config()
+            dest = cache_dir_for(model, _cfg.cache_dir if _cfg else None)
+            fp = dest / file_path
+            if fp.is_file() and not fp.is_symlink():
+                with fp.open("r", encoding="utf-8") as f:
+                    return json.load(f)
+            return None
         else:
             return None
     except Exception as e:
@@ -366,6 +401,7 @@ def read_repo_file_content(  # noqa: C901
             model.huggingface_repo_id
             or model.model_scope_model_id
             or model.local_path
+            or model.readable_source
             or "<unknown>"
         )
         logger.error(f"Failed to read '{file_path}' for source '{source_key}': {e}")
@@ -508,6 +544,25 @@ def get_pretrained_config(model: Model, **kwargs):
             model.local_path,
             local_files_only=True,
         )
+
+    elif model.source == SourceEnum.TOS:
+        from gpustack.worker.tos_storage import cache_dir_for
+
+        cache = global_config.cache_dir if global_config else None
+        dest = cache_dir_for(model, cache)
+        config_json = dest / "config.json"
+        if dest.is_dir() and config_json.is_file():
+            config_dict, _ = PretrainedConfig.get_config_dict(
+                str(dest),
+                local_files_only=True,
+            )
+        else:
+            logger.warning(
+                f"TOS source {model.readable_source} is resolved on the assigned "
+                "worker after download; server-side config inspection is skipped "
+                "until the release is present locally."
+            )
+            return {}
 
     else:
         raise ValueError(f"Unsupported model source: {model.source}")

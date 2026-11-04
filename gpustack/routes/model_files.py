@@ -71,6 +71,8 @@ def _model_file_search_clause(search: str):
             func.lower(ModelFile.model_scope_model_id).like(f"%{lower_search}%"),
             func.lower(ModelFile.model_scope_file_path).like(f"%{lower_search}%"),
             func.lower(ModelFile.local_path).like(f"%{lower_search}%"),
+            func.lower(ModelFile.tos_model).like(f"%{lower_search}%"),
+            func.lower(ModelFile.tos_bucket).like(f"%{lower_search}%"),
         ]
     )
 
@@ -88,6 +90,7 @@ def _normalize_model_file_order_by(order_by):
             new_order_by.append(("model_scope_model_id", direction))
             new_order_by.append(("model_scope_file_path", direction))
             new_order_by.append(("local_path", direction))
+            new_order_by.append(("tos_model", direction))
         elif field == "resolved_paths":
             # resolved_paths is a JSON field; replace ordering with expression
             new_order_by.append((cast(ModelFile.resolved_paths, String), direction))
@@ -148,6 +151,8 @@ def search_model_file_filter(data: ModelFile, search: str) -> bool:
             and search.lower() in data.model_scope_file_path.lower()
         )
         or (data.local_path and search.lower() in data.local_path.lower())
+        or (data.tos_model and search.lower() in data.tos_model.lower())
+        or (data.tos_bucket and search.lower() in data.tos_bucket.lower())
         or (data.resolved_paths and search.lower() in data.resolved_paths[0].lower())
     ):
         return True

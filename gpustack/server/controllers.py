@@ -1789,12 +1789,7 @@ async def _sync_replicas_legacy(session: AsyncSession, model: Model):
                 name=f"{model.name}-{name_prefix}",
                 model_id=model.id,
                 model_name=model.name,
-                source=model.source,
-                huggingface_repo_id=model.huggingface_repo_id,
-                huggingface_filename=model.huggingface_filename,
-                model_scope_model_id=model.model_scope_model_id,
-                model_scope_file_path=model.model_scope_file_path,
-                local_path=model.local_path,
+                **model.source_create_fields(),
                 state=ModelInstanceStateEnum.PENDING,
                 cluster_id=model.cluster_id,
                 # Inherit the parent Model's tenant binding — the schema
@@ -2210,12 +2205,7 @@ async def _build_instance_create(
         name=f"{model.name}-{role.name}-{name_prefix}",
         model_id=model.id,
         model_name=model.name,
-        source=model.source,
-        huggingface_repo_id=model.huggingface_repo_id,
-        huggingface_filename=model.huggingface_filename,
-        model_scope_model_id=model.model_scope_model_id,
-        model_scope_file_path=model.model_scope_file_path,
-        local_path=model.local_path,
+        **model.source_create_fields(),
         state=ModelInstanceStateEnum.PENDING,
         cluster_id=model.cluster_id,
         owner_principal_id=model.owner_principal_id,
@@ -2868,12 +2858,7 @@ async def get_or_create_lora_model_files_for_instance(
                     worker_id, (None, None)
                 )
                 nf = ModelFile(
-                    source=lora_src.source,
-                    huggingface_repo_id=lora_src.huggingface_repo_id,
-                    huggingface_filename=lora_src.huggingface_filename,
-                    model_scope_model_id=lora_src.model_scope_model_id,
-                    model_scope_file_path=lora_src.model_scope_file_path,
-                    local_path=lora_src.local_path,
+                    **lora_src.source_create_fields(),
                     is_lora=True,
                     base_model=base_desc,
                     state=ModelFileStateEnum.DOWNLOADING,
@@ -2994,12 +2979,7 @@ async def get_or_create_model_files_for_instance(
     for worker_id in missing_worker_ids:
         cluster_id, owner_principal_id = worker_scopes.get(worker_id, (None, None))
         model_file = ModelFile(
-            source=model_source.source,
-            huggingface_repo_id=model_source.huggingface_repo_id,
-            huggingface_filename=model_source.huggingface_filename,
-            model_scope_model_id=model_source.model_scope_model_id,
-            model_scope_file_path=model_source.model_scope_file_path,
-            local_path=model_source.local_path,
+            **model_source.source_create_fields(),
             state=ModelFileStateEnum.DOWNLOADING,
             worker_id=worker_id,
             source_index=model_source.model_source_index,

@@ -276,6 +276,29 @@ async def _get_cached_model_size(
     return None
 
 
+def _tos_manifest_weight_size(model: Model) -> int:
+    """Peek the immutable TOS manifest. This is not a weight download."""
+    from gpustack.worker.downloaders import TosDownloader
+
+    files = TosDownloader.get_model_file_info(model)
+    return sum(f.size for f in files if getattr(f, "size", None) is not None)
+
+
+async def _weight_size_without_cache(
+    model: Model,
+    workers: Optional[List[Worker]],
+    *,
+    is_diffusion: bool,
+) -> int:
+    if model.source == SourceEnum.LOCAL_PATH:
+        return await get_local_model_weight_size(
+            model.local_path, workers, is_diffusion=is_diffusion
+        )
+    if model.source == SourceEnum.TOS:
+        return await asyncio.to_thread(_tos_manifest_weight_size, model)
+    return 0
+
+
 async def estimate_lora_weights_bytes(
     model: Model,
     token: Optional[str],
@@ -307,12 +330,7 @@ async def estimate_lora_weights_bytes(
             ):
                 lm = Model(
                     name=model.name,
-                    source=src.source,
-                    huggingface_repo_id=src.huggingface_repo_id,
-                    huggingface_filename=src.huggingface_filename,
-                    model_scope_model_id=src.model_scope_model_id,
-                    model_scope_file_path=src.model_scope_file_path,
-                    local_path=src.local_path,
+                    **src.source_create_fields(),
                     categories=model.categories or [],
                     meta={},
                     replicas=1,
@@ -398,15 +416,14 @@ async def estimate_model_vram(
                 asyncio.to_thread(get_model_weight_size, model, token),
                 timeout=timeout_in_seconds,
             )
-        elif model.source == SourceEnum.LOCAL_PATH:
+        elif model.source in (SourceEnum.LOCAL_PATH, SourceEnum.TOS):
             # Try to get cached size from ModelFile first
             cached_size = await _get_cached_model_size(session, model)
             if cached_size:
                 weight_size = cached_size
             else:
-                # Fall back to querying workers
-                weight_size = await get_local_model_weight_size(
-                    model.local_path, workers, is_diffusion=False
+                weight_size = await _weight_size_without_cache(
+                    model, workers, is_diffusion=False
                 )
     except asyncio.TimeoutError:
         logger.warning(f"Timeout when getting weight size for model {model.name}")
@@ -468,15 +485,14 @@ async def estimate_diffusion_model_vram(
                 asyncio.to_thread(get_diffusion_model_weight_size, model, token),
                 timeout=timeout_in_seconds,
             )
-        elif model.source == SourceEnum.LOCAL_PATH:
+        elif model.source in (SourceEnum.LOCAL_PATH, SourceEnum.TOS):
             # Try to get cached size from ModelFile first
             cached_size = await _get_cached_model_size(session, model)
             if cached_size:
                 weight_size = cached_size
             else:
-                # Fall back to querying workers with is_diffusion=True
-                weight_size = await get_local_model_weight_size(
-                    model.local_path, workers, is_diffusion=True
+                weight_size = await _weight_size_without_cache(
+                    model, workers, is_diffusion=True
                 )
     except asyncio.TimeoutError:
         logger.warning(f"Timeout when getting weight size for model {model.name}")

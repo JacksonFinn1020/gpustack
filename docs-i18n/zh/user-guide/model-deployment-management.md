@@ -8,7 +8,7 @@ translation_status: translated
 
 ## 部署模型 { #deploy-model }
 
-目前支持来自 [Hugging Face](https://huggingface.co)、[ModelScope](https://modelscope.cn) 和本地路径的模型。
+目前支持来自 [Hugging Face](https://huggingface.co)、[ModelScope](https://modelscope.cn)、本地路径以及火山引擎 TOS 对象存储的模型。
 
 ### 部署 Hugging Face 模型 { #deploying-a-hugging-face-model }
 
@@ -68,6 +68,74 @@ translation_status: translated
 7. 如需高级配置，展开 `Advanced` 部分。详情参见[高级配置](#advanced-configuration)。
 
 8. 单击 `Save` 按钮。
+
+### 部署 TOS 模型 { #deploying-a-tos-model }
+
+主路径：**先把权重入库 TOS**，再在 GPUStack 里选择 worker 与 GPU。**被调度到的 worker** 下载并做 SHA256 校验（`manifest.json` + 内容寻址的 `objects/<sha256>/…`），然后 GPUStack 用本地路径启动推理后端。不要把「只下到控制机/本机」当作主路径。
+
+在 **server（入库）** 和会拉取的 **worker** 上设置同一组凭据（不要写进模型记录或仓库）：
+
+```bash
+export TOS_ACCESS_KEY=...
+export TOS_SECRET_KEY=...
+# 可选
+export TOS_SECURITY_TOKEN=...
+export TOS_PREFIX=lingji-models
+# 可选：放到 /data/models/<model>/<version>，而不是 GPUStack 缓存目录
+export TOS_MODEL_ROOT=/data/models
+```
+
+在入库或拉取的节点上安装官方 `tos` Python SDK。它不是 GPUStack 轮子的硬依赖：
+
+```bash
+pip install tos
+```
+
+把本机目录或磁盘上的 Hugging Face / ModelScope 快照发布为不可变版本：
+
+```bash
+gpustack tos-ingest \
+  --local-path /data/snapshots/qwen3 \
+  --tos-endpoint https://tos-cn-shanghai.volces.com \
+  --tos-region cn-shanghai \
+  --tos-bucket your-bucket \
+  --tos-model qwen3 \
+  --tos-version v1
+```
+
+同一作业也可走 `POST /v2/tos/releases`（组织 Owner）。响应里的 `model_create` 可直接用于 `POST /v2/models`。同一版本若文件不同会被拒绝覆盖。
+
+打开 GPUStack server 上的 `/tos-deploy`：源下拉包含 **TOS**、TOS 字段、可选的本机目录入库，以及 GPU ID（`gpu_selector`）。Hugging Face、ModelScope、`local_path` 仍在主 Deploy 表单。独立的 `gpustack-ui` 压缩包不在本仓库；本页是 server 随发行的 TOS 表单。
+
+通过管理 API（`POST /v2/models`，GPUStack 客户端默认前缀）创建部署：`source: tos`、TOS 坐标，以及 `gpu_selector`（或 worker 选择器），以便调度到目标服务器和 GPU。这与兼容 OpenAI 的 `GET /v1/models` 列表接口不是同一条路径。
+
+```yaml
+name: qwen3-tos
+source: tos
+tos_endpoint: https://tos-cn-shanghai.volces.com
+tos_region: cn-shanghai
+tos_bucket: your-bucket
+tos_model: qwen3
+tos_version: v1
+tos_release_path: lingji-models/qwen3/v1   # 可选；默认是 $TOS_PREFIX/model/version
+replicas: 1
+backend: vLLM
+gpu_selector:
+  gpu_ids:
+  - worker-1:cuda:0
+```
+
+`tos_release_path` 是包含 `manifest.json` 的桶内目录，支持 `{model}`、`{version}` 占位符。
+
+流程：
+
+1. 在 server 与 worker 上配置 `TOS_*`，并 `pip install tos`。
+2. 入库（`gpustack tos-ingest`、`POST /v2/tos/releases` 或 `/tos-deploy`）。
+3. 以 `source=tos` 创建模型并选择 worker 与 GPU（`/tos-deploy` 或 `POST /v2/models`）。
+4. 等待该 worker 上的 ModelFile 变为 `ready`（下载 + SHA 校验）。
+5. 实例从本地目录进入 Running。下载完成后若本地有 `config.json`，会用于重新估计架构与规模。
+
+Hugging Face、ModelScope 和 `local_path` 仍然可用。当权重应经对象存储落到指定 worker 时，优先走 TOS。
 
 ### 后端 { #backend }
 
@@ -174,6 +242,7 @@ replicas: 1
 | `huggingface_repo_id`, `huggingface_filename` | Hugging Face 模型的 `Repo ID` 和 `File Name` |
 | `model_scope_model_id`, `model_scope_file_path` | ModelScope 模型的 `Repo ID` 和 `File Name` |
 | `local_path` | 本地路径模型的 `Model Path` |
+| `tos_endpoint`, `tos_region`, `tos_bucket`, `tos_model`, `tos_version`, `tos_release_path` | `/tos-deploy` 与 `POST /v2/models` 上的 TOS 坐标，见[部署 TOS 模型](#deploying-a-tos-model)。 |
 | `replicas` | `Replicas` |
 | `categories` | [`Model Category`](#model-category) |
 | `placement_strategy` | `Scheduling` → [`Auto`](#auto)，放置策略 |
