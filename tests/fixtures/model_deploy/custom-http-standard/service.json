@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "name": "custom-http-standard",
+  "runtime": "custom-http",
+  "host": "0.0.0.0",
+  "port": 9670,
+  "model_path": "/data/model",
+  "device": "cuda:0",
+  "served_model_name": "custom-http-standard",
+  "tensor_parallel_size": 1,
+  "extra_args": [],
+  "custom": {
+    "command": [
+      "python",
+      "-m",
+      "uvicorn",
+      "main:app",
+      "--host",
+      "{host}",
+      "--port",
+      "{port}"
+    ],
+    "environment": {},
+    "working_directory": "/app/backend"
+  },
+  "health": {
+    "path": "/health",
+    "expect_json": {
+      "status": "ok",
+      "engine_ready": true
+    },
+    "require_nonempty_data": false
+  }
+}

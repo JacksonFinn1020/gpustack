@@ -74,6 +74,7 @@ nav_translations:
   Integrate with MaxKB: MaxKB との連携
   Integrate with NewAPI: NewAPI との連携
   Integrate with LiteLLM: LiteLLM との連携
+  Integrate with model-deploy: model-deploy との連携
   Running DeepSeek R1 671B with Distributed vLLM: 分散 vLLM による DeepSeek R1 671B の実行
   Running Distributed vLLM with the MultiProcessing Backend: MultiProcessing バックエンドによる分散 vLLM の実行
   Running DeepSeek R1 671B with Distributed Ascend Mindie: 分散 Ascend MindIE による DeepSeek R1 671B の実行

@@ -73,6 +73,7 @@ nav_translations:
   Integrate with MaxKB: MaxKB ile entegrasyon
   Integrate with NewAPI: NewAPI ile entegrasyon
   Integrate with LiteLLM: LiteLLM ile entegrasyon
+  Integrate with model-deploy: model-deploy ile entegrasyon
   Running DeepSeek R1 671B with Distributed vLLM: DeepSeek R1 671B'yi Dağıtılmış vLLM ile Çalıştırma
   Running Distributed vLLM with the MultiProcessing Backend: MultiProcessing Arka Ucuyla Dağıtılmış vLLM Çalıştırma
   Running DeepSeek R1 671B with Distributed Ascend Mindie: Dağıtılmış Ascend MindIE ile DeepSeek R1 671B Çalıştırma

@@ -74,6 +74,7 @@ nav_translations:
   Integrate with MaxKB: 与 MaxKB 集成
   Integrate with NewAPI: 与 NewAPI 集成
   Integrate with LiteLLM: 与 LiteLLM 集成
+  Integrate with model-deploy: 与 model-deploy 集成
   Running DeepSeek R1 671B with Distributed vLLM: 使用分布式 vLLM 运行 DeepSeek R1 671B
   Running Distributed vLLM with the MultiProcessing Backend: 使用 MultiProcessing 后端运行分布式 vLLM
   Running DeepSeek R1 671B with Distributed Ascend Mindie: 使用分布式昇腾 MindIE 运行 DeepSeek R1 671B

@@ -46,6 +46,12 @@ help:
 	#
 	#   * [dev] `make test`, execute unit testing.
 	#
+	#   * [dev] `make model-deploy-plan -- --deploy … --catalog …`, preview a
+	#     model-deploy → GPUStack mapping (no API call).
+	#
+	#   * [dev] `make model-deploy-apply -- --deploy … --catalog …` or
+	#     `--spec …`, POST ModelCreate (needs GPUSTACK_* ; use --dry-run).
+	#
 	#   * [dev] `make build`, execute building.
 	#
 	#   * [dev] `make build-docs`, build docs, not supported on Windows.
