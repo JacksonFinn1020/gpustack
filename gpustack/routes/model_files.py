@@ -336,8 +336,8 @@ async def list_model_file_files(
     """Relative files under a READY cache for TOS single-file archive.
 
     ``path`` values are the same strings as ``POST /v2/tos/archives`` ``paths``.
-    The control plane sends the ModelFile's resolved root to the assigned
-    worker; callers cannot pass a filesystem path.
+    The control plane sends the ModelFile id to the assigned worker;
+    callers cannot pass a filesystem path.
     """
     from gpustack.client.worker_filesystem_client import WorkerFilesystemClient
     from gpustack.utils.model_file_listing import (
@@ -348,14 +348,14 @@ async def list_model_file_files(
     )
 
     model_file = await ModelFile.one_by_id(session, id)
-    worker, root = await _ready_listing_target(session, ctx, model_file, id)
+    worker = await _ready_listing_target(session, ctx, model_file, id)
     limit = DEFAULT_PER_PAGE if perPage < 1 else min(perPage, MAX_PER_PAGE)
     if after:
         after = sanitize_archive_relative(after)
     try:
         async with WorkerFilesystemClient() as fs_client:
             remote = await fs_client.list_archive_files(
-                worker, root, after=after, limit=limit
+                worker, model_file.id, after=after, limit=limit
             )
     except Exception as exc:
         _raise_listing_transport_error(exc, worker)
@@ -411,7 +411,7 @@ async def _ready_listing_target(session, ctx, model_file, id: int):
             message=f"assigned worker {worker.id} is {worker.state}",
             details={"error_code": "worker_unreachable"},
         )
-    return worker, model_file.resolved_paths[0]
+    return worker
 
 
 def _raise_listing_transport_error(exc: Exception, worker: Worker) -> None:

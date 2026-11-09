@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Iterable, Iterator, List, Optional, Sequence
 
 from gpustack.api.exceptions import InvalidException
+from gpustack.schemas.models import SourceEnum
 
 MAX_LISTING_FILES = 5000
 MAX_LISTING_DEPTH = 12
@@ -59,6 +60,69 @@ def sanitize_archive_relative(relative: str) -> str:
     if not archive_relative_ok(relative):
         raise InvalidException(message=f"Illegal archive path: {relative}")
     return relative.replace("\\", "/")
+
+
+def listing_allow_bases(cache_dir: Optional[str], model_file) -> List[Path]:
+    """Directories a READY ModelFile may be listed from on this worker.
+
+    Hugging Face / ModelScope / TOS stay under the worker ``cache_dir``
+    (and ``local_dir`` when the download was redirected). Local Path
+    stays under ``local_path`` / ``local_dir``. Filesystem root is never
+    a base.
+    """
+    bases: List[Path] = []
+    source = getattr(model_file, "source", None)
+    source_value = source.value if hasattr(source, "value") else source
+    local_dir = getattr(model_file, "local_dir", None)
+    if source_value == SourceEnum.LOCAL_PATH.value:
+        local_path = getattr(model_file, "local_path", None)
+        if local_path:
+            path = Path(local_path)
+            bases.append(path if path.is_dir() else path.parent)
+        if local_dir:
+            bases.append(Path(local_dir))
+    else:
+        if cache_dir:
+            bases.append(Path(cache_dir))
+        if local_dir:
+            bases.append(Path(local_dir))
+    usable: List[Path] = []
+    seen = set()
+    for base in bases:
+        resolved = _usable_listing_base(base)
+        if resolved is None or resolved in seen:
+            continue
+        seen.add(resolved)
+        usable.append(resolved)
+    return usable
+
+
+def _usable_listing_base(base: Path) -> Optional[Path]:
+    try:
+        resolved = base.resolve()
+    except OSError:
+        return None
+    if resolved == Path(resolved.anchor):
+        return None
+    return resolved
+
+
+def assert_listing_root_allowed(
+    resolved_paths: Sequence[str],
+    *,
+    cache_dir: Optional[str],
+    model_file,
+) -> Path:
+    """Raise if the archive scan root is outside this ModelFile's cache."""
+    root = archive_scan_root(resolved_paths)
+    candidate = root.resolve()
+    for base in listing_allow_bases(cache_dir, model_file):
+        try:
+            candidate.relative_to(base)
+            return root
+        except ValueError:
+            continue
+    raise PermissionError("listing root is outside the model cache")
 
 
 def archive_scan_root(resolved_paths: Sequence[str]) -> Path:

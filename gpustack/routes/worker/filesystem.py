@@ -160,21 +160,40 @@ async def read_model_config(path: str = Query(..., description="File path to rea
 
 @router.get("/files/archive-listing", response_model=ArchiveListingResponse)
 async def archive_listing(
-    root: Annotated[str, Query(description="READY cache path from resolved_paths")],
+    http_request: Request,
+    model_file_id: Annotated[int, Query(description="READY ModelFile id")],
     after: Annotated[Optional[str], Query()] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
 ):
-    """List relative files under a READY cache. Called by the control plane only."""
-    from gpustack.utils.model_file_listing import list_archive_relatives
+    """List relatives under a READY ModelFile cache. Control plane only.
 
+    Callers supply ``model_file_id``, never a filesystem path. The scan
+    root comes from that record and must sit under this worker's model
+    cache (or the Local Path location).
+    """
+    from gpustack.schemas.model_files import ModelFileStateEnum
+    from gpustack.utils.model_file_listing import (
+        assert_listing_root_allowed,
+        list_archive_relatives,
+    )
+
+    cfg, model_file = _trusted_listing_model_file(http_request, model_file_id)
+    if model_file.state != ModelFileStateEnum.READY:
+        raise HTTPException(
+            status_code=400, detail="Only READY model files can list archive paths"
+        )
+    resolved_paths = model_file.resolved_paths or []
     try:
-        listing = list_archive_relatives([root], after=after, limit=limit)
+        assert_listing_root_allowed(
+            resolved_paths, cache_dir=cfg.cache_dir, model_file=model_file
+        )
+        listing = list_archive_relatives(resolved_paths, after=after, limit=limit)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except Exception as exc:
-        logger.error("archive listing failed for %s: %s", root, exc)
+        logger.error("archive listing failed for model_file %s: %s", model_file_id, exc)
         raise HTTPException(
             status_code=400, detail="Failed to list cache files"
         ) from exc
@@ -184,6 +203,21 @@ async def archive_listing(
         next_after=listing.next_after,
         root_kind=listing.root_kind,
     )
+
+
+def _trusted_listing_model_file(http_request: Request, model_file_id: int):
+    cfg: Optional[Config] = getattr(http_request.app.state, "config", None)
+    manager = getattr(http_request.app.state, "serve_manager", None)
+    if cfg is None or manager is None:
+        raise HTTPException(status_code=503, detail="worker listing is not available")
+    try:
+        model_file = manager._clientset.model_files.get(model_file_id, use_cache=False)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Model file not found")
+    assigned = getattr(model_file, "worker_id", None)
+    if assigned is None or assigned != manager._worker_id:
+        raise HTTPException(status_code=404, detail="Model file not found")
+    return cfg, model_file
 
 
 @router.get("/files/file-exists", response_model=FileExistsResponse)

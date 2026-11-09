@@ -98,12 +98,12 @@ class WorkerFilesystemClient:
     async def list_archive_files(
         self,
         worker: Worker,
-        root: str,
+        model_file_id: int,
         *,
         after: Optional[str] = None,
         limit: int = 100,
     ) -> ArchiveListingResponse:
-        params = {"root": root, "limit": limit}
+        params = {"model_file_id": model_file_id, "limit": limit}
         if after:
             params["after"] = after
         _, body = await request_to_worker(

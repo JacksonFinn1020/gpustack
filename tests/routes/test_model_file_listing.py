@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -167,15 +168,80 @@ async def test_ready_directory_returns_relative_gguf(monkeypatch):
     ]
 
 
+def _worker_request(tmp_path, model_file, worker_id=7, cache_dir=None):
+    cache = Path(cache_dir) if cache_dir else tmp_path / "cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    files = MagicMock()
+    files.get.return_value = model_file
+    req = MagicMock()
+    req.app.state.config = SimpleNamespace(cache_dir=str(cache))
+    req.app.state.serve_manager = SimpleNamespace(
+        _clientset=SimpleNamespace(model_files=files),
+        _worker_id=worker_id,
+    )
+    return req, cache
+
+
 @pytest.mark.asyncio
 async def test_worker_listing_missing_dir_is_404(tmp_path):
     from gpustack.routes.worker import filesystem as worker_fs
 
+    model_file = _ready_file(resolved_paths=[str(tmp_path / "cache" / "gone")])
+    req, _ = _worker_request(tmp_path, model_file)
     with pytest.raises(HTTPException) as exc:
-        await worker_fs.archive_listing(
-            root=str(tmp_path / "gone"), after=None, limit=10
-        )
+        await worker_fs.archive_listing(req, model_file_id=5, after=None, limit=10)
     assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_worker_listing_rejects_system_directory(tmp_path):
+    from gpustack.routes.worker import filesystem as worker_fs
+
+    outside = tmp_path / "tmp"
+    outside.mkdir()
+    (outside / "secret").write_bytes(b"x")
+    model_file = _ready_file(resolved_paths=[str(outside)])
+    req, _ = _worker_request(tmp_path, model_file)
+    with pytest.raises(HTTPException) as exc:
+        await worker_fs.archive_listing(req, model_file_id=5, after=None, limit=10)
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_worker_listing_rejects_other_workers_file(tmp_path):
+    from gpustack.routes.worker import filesystem as worker_fs
+
+    model_file = _ready_file(worker_id=99)
+    req, _ = _worker_request(tmp_path, model_file, worker_id=7)
+    with pytest.raises(HTTPException) as exc:
+        await worker_fs.archive_listing(req, model_file_id=5, after=None, limit=10)
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_worker_listing_rejects_non_ready(tmp_path):
+    from gpustack.routes.worker import filesystem as worker_fs
+
+    model_file = _ready_file(state=ModelFileStateEnum.DOWNLOADING)
+    req, _ = _worker_request(tmp_path, model_file)
+    with pytest.raises(HTTPException) as exc:
+        await worker_fs.archive_listing(req, model_file_id=5, after=None, limit=10)
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_worker_listing_hf_ready_under_cache(tmp_path):
+    from gpustack.routes.worker import filesystem as worker_fs
+
+    req, cache = _worker_request(tmp_path, _ready_file())
+    root = cache / "huggingface" / "Qwen" / "Qwen3"
+    (root / "weights").mkdir(parents=True)
+    (root / "weights" / "Q4.gguf").write_bytes(b"GGUF")
+    model_file = _ready_file(resolved_paths=[str(root)])
+    req.app.state.serve_manager._clientset.model_files.get.return_value = model_file
+    result = await worker_fs.archive_listing(req, model_file_id=5, after=None, limit=10)
+    assert result.root_kind == "directory"
+    assert "weights/Q4.gguf" in [item.path for item in result.items]
 
 
 def test_filter_keeps_only_archive_relatives():

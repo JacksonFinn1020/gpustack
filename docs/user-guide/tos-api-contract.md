@@ -77,13 +77,21 @@ listing is limited to that connection's bucket+prefix.
 | Org Member | false | `member` | 403 |
 | OSS personal scope (no org header; `current_principal_id = user.id`) | false | none | 403 |
 
-`is_admin` is **not** OrgOwner. UI `canSeeOrgAdmin === is_admin` only covers platform admin, not Org Owner. Send `X-Organization-Id` for Org Owner.
+`is_admin` is **not** OrgOwner. UI `canSeeOrgAdmin === is_admin` only covers platform admin, not Org Owner.
+
+Trusted Owner context for the UI:
+
+- `GET /v2/users/me` — `is_admin` only; no `org_role`
+- `GET /v2/users/me/organizations` — `{organization, role}` where `role` is `owner|member`. Send `X-Organization-Id: organization.id` when `role=owner` and `organization.is_personal=false`
+- The personal row (`is_personal=true`) is labeled `role=owner` but TOS / model-files still 403 without a real Org header. Do not treat it as OrgOwner.
 
 ## READY cache file list (single-file archive)
 
 `GET /v2/model-files/{id}/files?perPage=100&after=`
 
 Org Owner (same gate as model-files). **Not** worker transport. Callers cannot pass a filesystem path.
+
+Worker-internal (not for UI): `GET /files/archive-listing?model_file_id=` — the worker loads that READY ModelFile assigned to itself and lists `resolved_paths` only if the root is under this worker `cache_dir` (HF/MS/TOS, plus `local_dir` when set) or the Local Path location. A `root=` filesystem query is **not** accepted. `file-exists` is unchanged and is not this listing surface.
 
 When `resolved_paths[0]` is a directory, `path` is relative to that directory (`weights/Q4.gguf`). When it is a file, the only item is that file's basename. Those strings are exactly `POST /v2/tos/archives` `paths`.
 
