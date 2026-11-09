@@ -66,6 +66,39 @@ Read (`GET /v2/tos/connections`, `GET /v2/tos/connections/{id}`) returns
 redacted `access_key` and **never** `secret_key` or `security_token`. Catalog
 listing is limited to that connection's bucket+prefix.
 
+## Auth: OSS vs enterprise Org Owner
+
+`/v2/tos/*` and `/v2/model-files` sit on `require_org_role(OWNER, allow_system=True)`.
+
+| Caller | `users.is_admin` | `org_role` | Result |
+| --- | --- | --- | --- |
+| Platform admin | true | any / none | allowed (bypass) |
+| Enterprise Org Owner (or OSS Default-Org owner) with `X-Organization-Id` | false | `owner` | allowed |
+| Org Member | false | `member` | 403 |
+| OSS personal scope (no org header; `current_principal_id = user.id`) | false | none | 403 |
+
+`is_admin` is **not** OrgOwner. UI `canSeeOrgAdmin === is_admin` only covers platform admin, not Org Owner. Send `X-Organization-Id` for Org Owner.
+
+## READY cache file list (single-file archive)
+
+`GET /v2/model-files/{id}/files?perPage=100&after=`
+
+Org Owner (same gate as model-files). **Not** worker transport. Callers cannot pass a filesystem path.
+
+When `resolved_paths[0]` is a directory, `path` is relative to that directory (`weights/Q4.gguf`). When it is a file, the only item is that file's basename. Those strings are exactly `POST /v2/tos/archives` `paths`.
+
+```json
+{
+  "items": [{"path": "weights/Llama-3-8B-Q4_K_M.gguf", "size": 1234}],
+  "pagination": {"page": 1, "perPage": 100, "total": 1, "totalPage": 1},
+  "truncated": false,
+  "next_after": null,
+  "root_kind": "directory"
+}
+```
+
+Cursor: pass previous `next_after` as `after`. `perPage` max 200. Scan stops at 5000 files (`truncated=true`). `pagination.total` is this page's count, not a full directory total. Rejects `..`, absolute paths, symlink escape. Worker `UNREACHABLE`/`NOT_READY` → 503 `details.error_code=worker_unreachable`. Missing cache dir → 422 `cache_missing`. Do not treat an empty `items` list plus those errors as success.
+
 ## Archive (worker cache → TOS)
 
 `POST /v2/tos/archives` (Owner)

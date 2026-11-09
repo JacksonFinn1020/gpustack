@@ -181,6 +181,10 @@ async def enqueue_archive_job(
     from gpustack.worker import tos_storage
 
     assert_connection_owned_by(connection, model_file.owner_principal_id)
+    if paths:
+        from gpustack.utils.model_file_listing import sanitize_archive_relative
+
+        paths = [sanitize_archive_relative(path) for path in paths]
     if model_file.state != ModelFileStateEnum.READY:
         raise InvalidException(
             message="Only READY model files can be archived",

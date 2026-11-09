@@ -61,6 +61,8 @@ from gpustack.schemas.model_files import (
     ModelFileUpdate,
     ModelFilePublic,
     ModelFilesPublic,
+    ModelFileEntryPublic,
+    ModelFileEntriesPublic,
 )
 from gpustack.schemas.tos import (  # noqa: F401  table registration
     TosConnection,
@@ -315,6 +317,8 @@ __all__ = [
     "ModelFileUpdate",
     "ModelFilePublic",
     "ModelFilesPublic",
+    "ModelFileEntryPublic",
+    "ModelFileEntriesPublic",
     "CloudCredential",
     "CloudCredentialCreate",
     "CloudCredentialUpdate",

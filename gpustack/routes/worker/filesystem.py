@@ -4,13 +4,14 @@ import logging
 import os
 import subprocess
 import traceback
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from gpustack.api.auth import worker_auth
 from gpustack.config.config import Config
 from gpustack.schemas.filesystem import (
+    ArchiveListingResponse,
     FileExistsResponse,
     GGUFParseRequest,
     GGUFParseResponse,
@@ -22,7 +23,6 @@ from gpustack.scheduler.calculator import (
     GPUOffloadEnum,
     calculate_local_model_weight_size,
 )
-
 
 router = APIRouter(dependencies=[Depends(worker_auth)])
 
@@ -156,6 +156,34 @@ async def read_model_config(path: str = Query(..., description="File path to rea
     except Exception as e:
         logger.error(f"Error reading file {path}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to read file: {str(e)}")
+
+
+@router.get("/files/archive-listing", response_model=ArchiveListingResponse)
+async def archive_listing(
+    root: Annotated[str, Query(description="READY cache path from resolved_paths")],
+    after: Annotated[Optional[str], Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+):
+    """List relative files under a READY cache. Called by the control plane only."""
+    from gpustack.utils.model_file_listing import list_archive_relatives
+
+    try:
+        listing = list_archive_relatives([root], after=after, limit=limit)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("archive listing failed for %s: %s", root, exc)
+        raise HTTPException(
+            status_code=400, detail="Failed to list cache files"
+        ) from exc
+    return ArchiveListingResponse(
+        items=[{"path": item.path, "size": item.size} for item in listing.items],
+        truncated=listing.truncated,
+        next_after=listing.next_after,
+        root_kind=listing.root_kind,
+    )
 
 
 @router.get("/files/file-exists", response_model=FileExistsResponse)

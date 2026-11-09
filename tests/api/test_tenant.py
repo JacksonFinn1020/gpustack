@@ -357,6 +357,33 @@ async def test_require_org_role_blocks_insufficient_role():
 
 
 @pytest.mark.asyncio
+async def test_require_org_role_owner_is_not_platform_admin():
+    """Enterprise / OSS Default-Org Owner: is_admin false, org_role=owner."""
+    dep = require_org_role(OrgRole.OWNER)
+    ctx = TenantContext(
+        user=SimpleNamespace(kind=PrincipalType.USER),
+        is_platform_admin=False,
+        current_principal_id=42,
+        org_role=OrgRole.OWNER,
+    )
+    assert await dep(ctx) is ctx
+
+
+@pytest.mark.asyncio
+async def test_require_org_role_oss_personal_scope_denied():
+    """OSS UserInfo with no OrgRole: personal scope is not Org Owner."""
+    dep = require_org_role(OrgRole.OWNER)
+    ctx = TenantContext(
+        user=SimpleNamespace(kind=PrincipalType.USER),
+        is_platform_admin=False,
+        current_principal_id=7,
+        org_role=None,
+    )
+    with pytest.raises(ForbiddenException):
+        await dep(ctx)
+
+
+@pytest.mark.asyncio
 async def test_require_org_role_passes_for_matching_role():
     dep = require_org_role(OrgRole.OWNER, OrgRole.OWNER)
 

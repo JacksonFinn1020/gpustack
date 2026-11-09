@@ -14,7 +14,7 @@ from sqlmodel import (
 )
 
 from gpustack.mixins import BaseModelMixin
-from gpustack.schemas.common import ListParams, PaginatedList
+from gpustack.schemas.common import ListParams, PaginatedList, Pagination
 from gpustack.schemas.links import (
     ModelInstanceDraftModelFileLink,
     ModelInstanceModelFileLink,
@@ -118,3 +118,18 @@ class ModelFilePublic(
 
 
 ModelFilesPublic = PaginatedList[ModelFilePublic]
+
+
+class ModelFileEntryPublic(SQLModel):
+    """One file under a READY cache. ``path`` is an ``archives.paths`` value."""
+
+    path: str
+    size: int
+
+
+class ModelFileEntriesPublic(SQLModel):
+    items: List[ModelFileEntryPublic] = []
+    pagination: Pagination
+    truncated: bool = False
+    next_after: Optional[str] = None
+    root_kind: str = "directory"
