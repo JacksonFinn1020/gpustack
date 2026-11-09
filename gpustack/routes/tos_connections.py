@@ -26,8 +26,20 @@ from gpustack.server.db import async_session
 from gpustack.server.deps import SessionDep, TenantContextDep
 from gpustack.server.tos_bindings import redact_access_key
 from gpustack.utils.tos_scope import https_endpoint, normalize_prefix
+from gpustack.utils.tos_secrets import seal_secret
 
 router = APIRouter()
+
+
+async def _redact_connection_event(event) -> None:
+    data = getattr(event, "data", None)
+    if data is None or isinstance(data, dict):
+        return
+    if hasattr(data, "access_key"):
+        data.access_key = redact_access_key(getattr(data, "access_key", None))
+    for name in ("secret_key", "security_token"):
+        if hasattr(data, name):
+            setattr(data, name, None)
 
 
 def _public(row: TosConnection) -> TosConnectionPublic:
@@ -46,7 +58,12 @@ async def list_connections(
     fields = {"deleted_at": None}
     if params.watch:
         return StreamingResponse(
-            tenant_streaming(TosConnection, ctx, fields=fields),
+            tenant_streaming(
+                TosConnection,
+                ctx,
+                fields=fields,
+                event_transform=_redact_connection_event,
+            ),
             media_type="text/event-stream",
         )
     async with async_session() as session:
@@ -85,6 +102,14 @@ async def create_connection(
     )
     input.endpoint = https_endpoint(input.endpoint)
     input.prefix = normalize_prefix(input.prefix)
+    if input.credential_mode == "env":
+        input.access_key = None
+        input.secret_key = None
+        input.security_token = None
+        input.credential_ref = input.credential_ref or "env"
+    else:
+        input.secret_key = seal_secret(input.secret_key)
+        input.security_token = seal_secret(input.security_token)
     existing = await TosConnection.one_by_fields(
         session,
         {
@@ -122,8 +147,19 @@ async def update_connection(
         payload["endpoint"] = https_endpoint(payload["endpoint"])
     if "prefix" in payload:
         payload["prefix"] = normalize_prefix(payload["prefix"])
-    if "secret_key" in payload and payload["secret_key"] is None:
-        payload.pop("secret_key")
+    if payload.get("credential_mode") == "env":
+        payload["access_key"] = None
+        payload["secret_key"] = None
+        payload["security_token"] = None
+        payload["credential_ref"] = payload.get("credential_ref") or "env"
+    else:
+        if "secret_key" in payload:
+            if payload["secret_key"] is None:
+                payload.pop("secret_key")
+            else:
+                payload["secret_key"] = seal_secret(payload["secret_key"])
+        if payload.get("security_token"):
+            payload["security_token"] = seal_secret(payload["security_token"])
     try:
         await existing.update(session, payload)
     except Exception as e:

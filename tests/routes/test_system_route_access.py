@@ -231,6 +231,11 @@ WORKER_REQUESTS = [
     ("GET", "/inference-backends?watch=true"),
     ("GET", "/runner-override-entries"),
     ("GET", "/metrics/config"),
+    ("GET", "/tos/archives"),
+    ("GET", "/tos/archives/2"),
+    ("PUT", "/tos/archives/2"),
+    ("POST", "/tos/archives/2/complete"),
+    ("GET", "/tos/archives/2/transport"),
 ]
 
 

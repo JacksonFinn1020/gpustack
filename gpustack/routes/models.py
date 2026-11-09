@@ -521,6 +521,27 @@ def _is_schedule_pause_only_update(
     return all(getattr(model_in, field) == getattr(stored, field) for field in fields)
 
 
+def _reject_tos_gguf_on_transformer_backend(model_in) -> None:
+    """GGUF TOS artifacts cannot start on vLLM/SGLang/MindIE/VoxBox."""
+    from gpustack.schemas.models import get_backend, is_gguf_model
+
+    if getattr(model_in, "source", None) != SourceEnum.TOS:
+        return
+    if not is_gguf_model(model_in):
+        return
+    backend = get_backend(model_in)
+    if backend in (
+        BackendEnum.VLLM,
+        BackendEnum.SGLANG,
+        BackendEnum.ASCEND_MINDIE,
+        BackendEnum.VOX_BOX,
+    ):
+        raise BadRequestException(
+            message="TOS GGUF artifacts cannot use this inference backend; "
+            "use a GGUF-capable custom/llama-box backend"
+        )
+
+
 async def validate_model_in(
     session: SessionDep,
     model_in: Union[ModelCreate, ModelUpdate, ModelSpecBase],
@@ -532,6 +553,7 @@ async def validate_model_in(
     # merged state rather than against the handful of fields it happened to
     # send. Absent on create, where there is nothing to merge.
     await validate_pd_config(session, model_in, cluster_id=cluster_id, stored=stored)
+    _reject_tos_gguf_on_transformer_backend(model_in)
 
     # API responses use short LoRA names; compare their stored form when
     # deciding whether a request only pauses an unchanged deployment.

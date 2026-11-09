@@ -2226,7 +2226,7 @@ def is_gguf_model(model: Union[Model, ModelSource]):
     Args:
         model: Model to check.
     """
-    return (
+    if (
         (
             model.source == SourceEnum.HUGGING_FACE
             and model.huggingface_filename
@@ -2242,7 +2242,25 @@ def is_gguf_model(model: Union[Model, ModelSource]):
             and model.local_path
             and model.local_path.endswith(".gguf")
         )
-    )
+    ):
+        return True
+    if model.source == SourceEnum.TOS:
+        from gpustack.utils.tos_scope import looks_gguf
+
+        provenance = getattr(model, "provenance", None) or {}
+        if provenance.get("gguf"):
+            return True
+        selected = provenance.get("selected_paths") or []
+        if looks_gguf([str(path) for path in selected]):
+            return True
+        for value in (
+            getattr(model, "tos_release_path", None),
+            getattr(model, "tos_model", None),
+            getattr(model, "tos_version", None),
+        ):
+            if value and str(value).lower().endswith(".gguf"):
+                return True
+    return False
 
 
 def is_audio_model(model: Model):

@@ -36,6 +36,27 @@ def https_endpoint(endpoint: str) -> str:
         raise InvalidException(message=str(exc)) from exc
 
 
+def env_endpoint_allows(connection_endpoint: str) -> bool:
+    """Env-mode keys may only be sent to TOS_ENDPOINT / TOS_ALLOWED_ENDPOINTS."""
+    pinned = os.environ.get("TOS_ENDPOINT", "").strip()
+    allowed = os.environ.get("TOS_ALLOWED_ENDPOINTS", "").strip()
+    candidates = []
+    if pinned:
+        candidates.append(pinned)
+    if allowed:
+        candidates.extend(part.strip() for part in allowed.split(",") if part.strip())
+    if not candidates:
+        return False
+    target = https_endpoint(connection_endpoint)
+    for item in candidates:
+        try:
+            if https_endpoint(item) == target:
+                return True
+        except InvalidException:
+            continue
+    return False
+
+
 def object_key_in_prefix(prefix: str, key: str) -> bool:
     """True when ``key`` is exactly under the connection prefix."""
     normalized_prefix = normalize_prefix(prefix)

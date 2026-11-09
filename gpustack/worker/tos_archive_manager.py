@@ -37,11 +37,13 @@ class TosArchiveManager:
         while True:
             try:
                 jobs = self._client.list({"worker_id": self._worker_id, "perPage": 100})
+                restartable = {
+                    TosArchiveStateEnum.QUEUED.value,
+                    TosArchiveStateEnum.UPLOADING.value,
+                    TosArchiveStateEnum.VERIFYING.value,
+                }
                 for job in jobs:
-                    if (
-                        job.state == TosArchiveStateEnum.QUEUED.value
-                        and job.id not in self._active
-                    ):
+                    if job.state in restartable and job.id not in self._active:
                         asyncio.create_task(self._run_job(job))
             except Exception as exc:
                 logger.error("Failed to list TOS archive jobs: %s", exc)
@@ -69,6 +71,14 @@ class TosArchiveManager:
 
     def _archive(self, job: TosArchiveJobPublic) -> None:
         transport = self._client.transport(job.id)
+        if transport.credential_mode == "env":
+            from gpustack.utils.tos_scope import env_endpoint_allows
+
+            if not env_endpoint_allows(transport.endpoint):
+                raise tos_storage.TosStorageError(
+                    "env credentials cannot be used unless TOS_ENDPOINT "
+                    "matches this connection endpoint"
+                )
         root = self._local_root(job)
         location = tos_storage.TosLocation(
             endpoint=transport.endpoint,

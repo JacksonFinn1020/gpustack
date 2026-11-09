@@ -32,7 +32,7 @@ def upgrade() -> None:
             sa.Column("credential_mode", sa.String(length=32), nullable=False),
             sa.Column("credential_ref", sa.String(length=255), nullable=True),
             sa.Column("access_key", sa.String(length=255), nullable=True),
-            sa.Column("secret_key", sa.String(length=512), nullable=True),
+            sa.Column("secret_key", sa.Text(), nullable=True),
             sa.Column("security_token", sa.Text(), nullable=True),
             sa.Column("description", sa.Text(), nullable=True),
             sa.Column("owner_principal_id", sa.Integer(), nullable=True),

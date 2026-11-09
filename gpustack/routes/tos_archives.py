@@ -44,10 +44,12 @@ from gpustack.server.tos_bindings import (
 from gpustack.utils.tos_scope import (
     artifact_uri,
     classify_archive_error,
+    env_endpoint_allows,
     looks_gguf,
     normalize_prefix,
     object_key_in_prefix,
 )
+from gpustack.utils.tos_secrets import open_secret
 from gpustack.worker import tos_storage
 
 router = APIRouter()
@@ -63,6 +65,24 @@ def _require_assigned_worker(ctx: TenantContext, job: TosArchiveJob) -> None:
         raise ForbiddenException(message="Only the assigned worker may call this")
     if _worker_id(ctx) != job.worker_id:
         raise ForbiddenException(message="Archive job is assigned to another worker")
+
+
+def _sdk_client(connection: TosConnection):
+    if connection.credential_mode == "env":
+        if not env_endpoint_allows(connection.endpoint):
+            raise InvalidException(
+                message="env credentials cannot be used unless TOS_ENDPOINT "
+                "(or TOS_ALLOWED_ENDPOINTS) matches this connection endpoint",
+                details={"error_code": TosArchiveErrorCode.INVALID_CREDENTIALS.value},
+            )
+        return tos_storage.SdkTosClient(connection.endpoint, connection.region)
+    return tos_storage.SdkTosClient(
+        connection.endpoint,
+        connection.region,
+        access_key=connection.access_key,
+        secret_key=open_secret(connection.secret_key),
+        security_token=open_secret(connection.security_token),
+    )
 
 
 def _sync_model_file_archive(model_file: ModelFile, job: TosArchiveJob) -> None:
@@ -84,7 +104,10 @@ async def list_archives(
     state: str = None,
 ):
     fields = {}
-    if worker_id:
+    assigned = _worker_id(ctx)
+    if ctx.user is not None and ctx.user.kind == PrincipalType.SYSTEM and assigned:
+        fields["worker_id"] = assigned
+    elif worker_id:
         fields["worker_id"] = worker_id
     if model_file_id:
         fields["model_file_id"] = model_file_id
@@ -201,16 +224,18 @@ async def complete_archive(
     _require_assigned_worker(ctx, job)
     if job.state == TosArchiveStateEnum.READY.value:
         return job
+    incoming = input.provenance.model_dump(exclude_none=True)
+    if not incoming.get("manifest_sha256"):
+        raise InvalidException(message="complete requires provenance.manifest_sha256")
+    stored = dict(job.provenance or {})
+    origin = {key: stored[key] for key in stored if str(key).startswith("origin_")}
+    job.provenance = {**stored, **incoming, **origin}
     job.state = TosArchiveStateEnum.READY.value
     job.progress = 100
     job.size = input.size
     job.uploaded_bytes = input.uploaded_bytes
     job.error_code = None
     job.state_message = None
-    job.provenance = {
-        **(job.provenance or {}),
-        **input.provenance.model_dump(exclude_none=True),
-    }
     await job.update(session)
     model_file = await ModelFile.one_by_id(session, job.model_file_id)
     if model_file:
@@ -258,6 +283,23 @@ async def get_archive_transport(session: SessionDep, ctx: TenantContextDep, id: 
     connection = await TosConnection.one_by_id(session, job.connection_id)
     if not connection:
         raise NotFoundException(message="TOS connection not found")
+    if connection.credential_mode == "env":
+        if not env_endpoint_allows(connection.endpoint):
+            raise InvalidException(
+                message="env credentials cannot be used unless TOS_ENDPOINT "
+                "(or TOS_ALLOWED_ENDPOINTS) matches this connection endpoint",
+                details={"error_code": TosArchiveErrorCode.INVALID_CREDENTIALS.value},
+            )
+        return TosTransport(
+            endpoint=connection.endpoint,
+            region=connection.region,
+            bucket=connection.bucket,
+            prefix=normalize_prefix(connection.prefix),
+            tos_model=job.tos_model,
+            tos_version=job.tos_version,
+            credential_mode=connection.credential_mode,
+            credential_ref=connection.credential_ref or "env",
+        )
     return TosTransport(
         endpoint=connection.endpoint,
         region=connection.region,
@@ -268,8 +310,8 @@ async def get_archive_transport(session: SessionDep, ctx: TenantContextDep, id: 
         credential_mode=connection.credential_mode,
         credential_ref=connection.credential_ref,
         access_key=connection.access_key,
-        secret_key=connection.secret_key,
-        security_token=connection.security_token,
+        secret_key=open_secret(connection.secret_key),
+        security_token=open_secret(connection.security_token),
     )
 
 
@@ -283,13 +325,7 @@ async def list_release_catalog(
     connection = await load_visible_connection(session, ctx, connection_id)
     prefix = normalize_prefix(connection.prefix)
     try:
-        client = tos_storage.SdkTosClient(
-            connection.endpoint,
-            connection.region,
-            access_key=connection.access_key,
-            secret_key=connection.secret_key,
-            security_token=connection.security_token,
-        )
+        client = _sdk_client(connection)
         listed = tos_storage.list_releases(client, connection.bucket, prefix)
     except tos_storage.TosStorageError as exc:
         raise InvalidException(
@@ -342,13 +378,7 @@ async def get_release_detail(
                 message="release is outside the connection prefix",
                 details={"error_code": TosArchiveErrorCode.PREFIX_DENIED.value},
             )
-        client = tos_storage.SdkTosClient(
-            location.endpoint,
-            location.region,
-            access_key=connection.access_key,
-            secret_key=connection.secret_key,
-            security_token=connection.security_token,
-        )
+        client = _sdk_client(connection)
         manifest = tos_storage.fetch_manifest(location, client)
     except tos_storage.TosStorageError as exc:
         raise InvalidException(

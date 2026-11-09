@@ -5435,6 +5435,15 @@ async def _maybe_enqueue_auto_archive(file: ModelFile) -> None:
             )
             await session.commit()
     except Exception as exc:
+        from gpustack.api.exceptions import AlreadyExistsException
+
+        if isinstance(exc, AlreadyExistsException):
+            logger.info(
+                "auto_archive for model file %s hit an existing version: %s",
+                file.id,
+                exc,
+            )
+            return
         logger.error(
             "Failed to enqueue auto_archive for model file %s: %s", file.id, exc
         )

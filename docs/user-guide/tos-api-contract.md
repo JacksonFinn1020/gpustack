@@ -46,7 +46,12 @@ release.
 ```
 
 `credential_mode=env` with `credential_ref=env` uses `TOS_ACCESS_KEY` /
-`TOS_SECRET_KEY` on the assigned worker instead of stored keys.
+`TOS_SECRET_KEY` on the assigned worker instead of stored keys. The process
+must set `TOS_ENDPOINT` (or `TOS_ALLOWED_ENDPOINTS`) to the **same** https
+host as the connection; otherwise transport is refused so env keys cannot
+be sent to an arbitrary endpoint. Inline `secret_key` / `security_token` are
+sealed at rest (`gsk1:` Fernet from `GPUSTACK_TOS_SECRET_KEY` or
+`GPUSTACK_JWT_SECRET_KEY`) and decrypted only for the assigned worker.
 
 Read (`GET /v2/tos/connections`, `GET /v2/tos/connections/{id}`) returns
 redacted `access_key` and **never** `secret_key` or `security_token`. Catalog
@@ -74,7 +79,7 @@ States: `queued` → `uploading` → `verifying` → `ready` | `error`.
 
 | Method | Path | Who |
 | --- | --- | --- |
-| GET | `/v2/tos/archives?worker_id=&model_file_id=&state=` | Owner, assigned worker |
+| GET | `/v2/tos/archives?worker_id=&model_file_id=&state=` | Owner, assigned worker (SYSTEM callers are forced to their own `worker_id`) |
 | GET | `/v2/tos/archives/{id}` | Owner, assigned worker |
 | PUT | `/v2/tos/archives/{id}` | Assigned worker (progress; cannot set `ready`) |
 | POST | `/v2/tos/archives/{id}/complete` | Assigned worker (atomic finish) |
@@ -87,8 +92,13 @@ States: `queued` → `uploading` → `verifying` → `ready` | `error`.
 `source_mismatch`, `format_unsupported`, `connection_not_found`.
 
 Objects are uploaded first; `manifest.json` is written last with TOS
-`forbid_overwrite`. A crash mid-upload leaves no catalog entry; retry skips
-existing content-addressed objects.
+`forbid_overwrite`. A crash mid-upload leaves no catalog entry. Retry **re-hashes**
+existing content-addressed objects before skipping them; size/SHA mismatch
+re-uploads. `POST .../complete` is idempotent when the job is already `ready`,
+requires `provenance.manifest_sha256`, and keeps `origin_*` from the ModelFile
+record (worker payloads cannot replace them). Workers reclaim `queued`,
+`uploading`, and `verifying` jobs after restart. SDK `forbid_overwrite` and
+cross-process DB commit vs object PUT atomicity are **not** proven on live TOS.
 
 ## Catalog and deploy
 
@@ -103,10 +113,11 @@ Then reuse:
 - `POST /v2/models` with `source=tos`, same coordinates, existing
   `backend`, `cluster_id`, `gpu_selector`, `replicas`
 
-Backend/format: GGUF is detected from archived file names (`*.gguf`). TOS
-models are not assumed to start on every backend; pick `llama-box` / vLLM /
-SGLang as you would for Hub weights. `trust_remote_code` is never enabled by
-this path.
+Backend/format: GGUF is detected from `provenance.gguf`, `selected_paths`,
+or `*.gguf` coordinates **before deploy**. `POST /v2/models` rejects TOS GGUF
+with vLLM / SGLang / MindIE / VoxBox. `trust_remote_code` is never enabled by
+this path. There is **no** `/tos/browse` route; catalog is
+`GET /v2/tos/releases` and `GET /v2/tos/releases/detail`.
 
 ## Auto-archive (HF / ModelScope)
 
@@ -137,8 +148,7 @@ TOS **download** skips files whose local size and SHA256 already match the
 manifest (including after worker restart, using `.deployment-manifest.json`).
 Partial `.tos-tmp/*.part` files are discarded and the object is fetched again.
 There is no multipart byte-range resume in this release; for multi-tens-of-GB
-weights that is a full object retry. **Upload** skips objects that already
-exist at the content-addressed key.
+weights that is a full object retry. **Upload** re-hashes existing content-addressed keys and only skips on SHA+size match.
 
 S3-compatible APIs are **not** claimed unsupported; this implementation uses
 the native TOS SDK because `forbid_overwrite` is available and tested against

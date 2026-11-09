@@ -97,6 +97,10 @@ class FakeTos:
         marker = prefix or ""
         return [key for key in self.objects if key.startswith(marker)]
 
+    def object_digest(self, bucket: str, key: str):
+        data = self.get_object_bytes(bucket, key)
+        return _sha(data), len(data)
+
 
 def _tos_source(**overrides) -> ModelSource:
     fields = dict(
@@ -416,6 +420,26 @@ def test_model_id_allows_org_slash_name():
         "meta/llama-3-8b", "v1", prefix="org-a/models"
     )
     assert path == "org-a/models/meta/llama-3-8b/v1"
+
+
+def test_upload_rejects_corrupt_content_addressed_object(tmp_path):
+    location = _location()
+    src = tmp_path / "snap"
+    src.mkdir()
+    (src / "weights.bin").write_bytes(b"payload")
+    scanned = tos_storage.scan_local_release(src, location)
+    client = FakeTos({scanned["files"][0]["object_key"]: b"tampered-bytes"})
+    tos_storage.upload_release(location, src, client)
+    assert client.objects[scanned["files"][0]["object_key"]] == b"payload"
+
+
+def test_https_endpoint_rejects_private_and_localhost():
+    with pytest.raises(tos_storage.TosStorageError, match="private"):
+        tos_storage._https_endpoint("https://10.1.2.3")
+    with pytest.raises(tos_storage.TosStorageError, match="not allowed"):
+        tos_storage._https_endpoint("https://localhost")
+    with pytest.raises(tos_storage.TosStorageError, match="not allowed"):
+        tos_storage._https_endpoint("https://metadata.google.internal")
 
 
 def test_upload_rejects_path_escape(tmp_path):
