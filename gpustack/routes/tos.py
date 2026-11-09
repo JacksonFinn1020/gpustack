@@ -156,7 +156,24 @@ def ingest_release(
     if not local.is_dir():
         raise InvalidException(message="local_path must be an existing directory")
     if client is None:
-        client = tos_storage.SdkTosClient(location.endpoint, location.region)
+        from gpustack.utils.tos_credentials import (
+            access_from_legacy_source,
+            client_from_access,
+        )
+
+        source = ModelSource(
+            source=SourceEnum.TOS,
+            tos_endpoint=req.tos_endpoint,
+            tos_region=req.tos_region,
+            tos_bucket=req.tos_bucket,
+            tos_model=req.tos_model,
+            tos_version=req.tos_version,
+            tos_release_path=req.tos_release_path,
+        )
+        try:
+            client = client_from_access(access_from_legacy_source(source))
+        except tos_storage.TosStorageError as exc:
+            raise InvalidException(message=str(exc)) from exc
     try:
         manifest = tos_storage.upload_release(location, local, client)
     except tos_storage.TosStorageError as exc:

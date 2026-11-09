@@ -276,12 +276,31 @@ async def _get_cached_model_size(
     return None
 
 
-def _tos_manifest_weight_size(model: Model) -> int:
+def _tos_manifest_weight_size(model: Model, client) -> int:
     """Peek the immutable TOS manifest. This is not a weight download."""
     from gpustack.worker.downloaders import TosDownloader
 
-    files = TosDownloader.get_model_file_info(model)
+    files = TosDownloader.get_model_file_info(model, client=client)
     return sum(f.size for f in files if getattr(f, "size", None) is not None)
+
+
+async def _tos_control_plane_client(model: Model):
+    from gpustack.schemas.tos import TosConnection
+    from gpustack.server.db import async_session
+    from gpustack.utils.tos_credentials import (
+        access_from_connection,
+        access_from_legacy_source,
+        assert_connection_owned_by,
+        client_from_access,
+    )
+
+    if model.tos_connection_id:
+        async with async_session() as session:
+            connection = await TosConnection.one_by_id(session, model.tos_connection_id)
+            assert_connection_owned_by(connection, model.owner_principal_id)
+            access = access_from_connection(connection)
+        return client_from_access(access)
+    return client_from_access(access_from_legacy_source(model))
 
 
 async def _weight_size_without_cache(
@@ -295,7 +314,8 @@ async def _weight_size_without_cache(
             model.local_path, workers, is_diffusion=is_diffusion
         )
     if model.source == SourceEnum.TOS:
-        return await asyncio.to_thread(_tos_manifest_weight_size, model)
+        client = await _tos_control_plane_client(model)
+        return await asyncio.to_thread(_tos_manifest_weight_size, model, client)
     return 0
 
 

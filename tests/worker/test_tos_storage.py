@@ -214,21 +214,17 @@ def test_download_model_tos_uses_worker_client(tmp_path, monkeypatch):
         files[0]["object_key"]: content,
     }
     client = FakeTos(objects)
-    monkeypatch.setattr(
-        tos_storage,
-        "SdkTosClient",
-        lambda endpoint, region, **kwargs: client,
-    )
     dest = tmp_path / "cache"
     paths = downloaders.download_model(
         _tos_source(),
         local_dir=str(dest),
         cache_dir=str(tmp_path / "unused"),
+        tos_client=client,
     )
     assert paths == [str(dest)]
     assert (dest / "config.json").read_bytes() == content
 
-    info = downloaders.get_model_file_info(_tos_source())
+    info = downloaders.TosDownloader.get_model_file_info(_tos_source(), client=client)
     assert [entry.rfilename for entry in info] == ["config.json"]
     assert info[0].size == len(content)
 
@@ -337,6 +333,10 @@ def test_tos_pretrained_config_reads_local_cache(tmp_path, config):
 
 @pytest.mark.asyncio
 async def test_tos_vram_uses_manifest_size(monkeypatch):
+    async def _fake_client(model):
+        return object()
+
+    monkeypatch.setattr(policy_utils, "_tos_control_plane_client", _fake_client)
     monkeypatch.setattr(
         downloaders.TosDownloader,
         "get_model_file_info",

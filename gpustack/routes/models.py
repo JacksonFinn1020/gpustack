@@ -553,6 +553,16 @@ async def validate_model_in(
     # merged state rather than against the handful of fields it happened to
     # send. Absent on create, where there is nothing to merge.
     await validate_pd_config(session, model_in, cluster_id=cluster_id, stored=stored)
+    from gpustack.server.tos_bindings import stamp_tos_provenance_from_manifest
+
+    pause_preview = _is_schedule_pause_only_update(model_in, stored)
+    if not pause_preview and getattr(model_in, "source", None) == SourceEnum.TOS:
+        owner = getattr(model_in, "owner_principal_id", None)
+        if owner is None and stored is not None:
+            owner = stored.owner_principal_id
+        await stamp_tos_provenance_from_manifest(
+            session, model_in, owner_principal_id=owner
+        )
     _reject_tos_gguf_on_transformer_backend(model_in)
 
     # API responses use short LoRA names; compare their stored form when
@@ -1511,10 +1521,15 @@ async def _check_model_create(
     )
     from gpustack.server.tos_bindings import (
         auto_archive_enabled,
+        bind_auto_archive_connection,
         bind_tos_connection,
     )
 
-    await bind_tos_connection(session, ctx, model_in)
+    model_in.owner_principal_id = target_org_id
+    await bind_tos_connection(session, ctx, model_in, expected_owner=target_org_id)
+    await bind_auto_archive_connection(
+        session, ctx, model_in, expected_owner=target_org_id
+    )
     if auto_archive_enabled(model_in) and model_in.source == SourceEnum.TOS:
         raise BadRequestException(
             message="auto_archive is for Hugging Face / ModelScope downloads, not TOS source"

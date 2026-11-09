@@ -45,6 +45,13 @@ class TosArchiveClient:
         raise_if_response_error(response)
         return TosTransport.model_validate(response.json())
 
+    def pull_transport(self, model_file_id: int) -> TosTransport:
+        response = self._client.get_httpx_client().get(
+            f"/tos/pull/{model_file_id}/transport"
+        )
+        raise_if_response_error(response)
+        return TosTransport.model_validate(response.json())
+
     def complete(
         self, id: int, input: TosArchiveCompleteRequest
     ) -> TosArchiveJobPublic:

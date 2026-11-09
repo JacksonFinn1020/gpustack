@@ -236,6 +236,7 @@ WORKER_REQUESTS = [
     ("PUT", "/tos/archives/2"),
     ("POST", "/tos/archives/2/complete"),
     ("GET", "/tos/archives/2/transport"),
+    ("GET", "/tos/pull/2/transport"),
 ]
 
 

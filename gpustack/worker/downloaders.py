@@ -50,6 +50,7 @@ def download_model(
     model_scope_files: Optional[List[str]] = None,
     huggingface_progress: Optional[Callable[[str, int], None]] = None,
     huggingface_cancel_check: Optional[Callable[[], None]] = None,
+    tos_client=None,
 ) -> List[str]:
     if model.source == SourceEnum.HUGGING_FACE:
         return HfDownloader.download(
@@ -80,6 +81,7 @@ def download_model(
             model,
             local_dir=local_dir,
             cache_dir=cache_dir,
+            client=tos_client,
             progress_callback=huggingface_progress,
         )
 
@@ -409,7 +411,9 @@ class TosDownloader:
         client: Optional[tos_storage.TosObjectClient] = None,
     ) -> List[FileEntry]:
         location = tos_storage.location_from_source(model)
-        client = client or tos_storage.SdkTosClient(location.endpoint, location.region)
+        from gpustack.utils.tos_credentials import client_for_source
+
+        client = client_for_source(model, client)
         manifest = tos_storage.fetch_manifest(location, client)
         return tos_storage.manifest_file_entries(manifest)
 
@@ -429,7 +433,9 @@ class TosDownloader:
             destination = tos_storage.cache_dir_for(
                 model, str(cache_dir) if cache_dir else None
             )
-        client = client or tos_storage.SdkTosClient(location.endpoint, location.region)
+        from gpustack.utils.tos_credentials import client_for_source
+
+        client = client_for_source(model, client)
         destination.parent.mkdir(parents=True, exist_ok=True)
         lock_filename = str(destination.parent / f"{destination.name}.lock")
         logger.info(f"Downloading TOS release {location.uri} to {destination}")
@@ -443,4 +449,10 @@ class TosDownloader:
                 progress_callback=progress_callback,
             )
         logger.info(f"Downloaded TOS release {location.uri}")
+        manifest = tos_storage.fetch_manifest(location, client)
+        stamped = tos_storage.provenance_from_manifest(manifest, location)
+        if hasattr(model, "provenance"):
+            current = dict(model.provenance or {})
+            current.update(stamped)
+            model.provenance = current
         return paths

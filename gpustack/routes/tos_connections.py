@@ -4,6 +4,7 @@ from fastapi.responses import StreamingResponse
 from gpustack.api.exceptions import (
     AlreadyExistsException,
     InternalServerErrorException,
+    InvalidException,
     NotFoundException,
 )
 from gpustack.api.streaming import tenant_streaming
@@ -24,9 +25,13 @@ from gpustack.schemas.tos import (
 )
 from gpustack.server.db import async_session
 from gpustack.server.deps import SessionDep, TenantContextDep
-from gpustack.server.tos_bindings import redact_access_key
-from gpustack.utils.tos_scope import https_endpoint, normalize_prefix
-from gpustack.utils.tos_secrets import seal_secret
+from gpustack.server.tos_bindings import (
+    connection_scope,
+    public_access_key,
+    seal_connection_secrets,
+)
+from gpustack.utils.tos_scope import enforce_endpoint_trust, normalize_prefix
+from gpustack.utils.tos_secrets import TosSecretError
 
 router = APIRouter()
 
@@ -36,7 +41,7 @@ async def _redact_connection_event(event) -> None:
     if data is None or isinstance(data, dict):
         return
     if hasattr(data, "access_key"):
-        data.access_key = redact_access_key(getattr(data, "access_key", None))
+        data.access_key = public_access_key(getattr(data, "access_key", None))
     for name in ("secret_key", "security_token"):
         if hasattr(data, name):
             setattr(data, name, None)
@@ -44,9 +49,10 @@ async def _redact_connection_event(event) -> None:
 
 def _public(row: TosConnection) -> TosConnectionPublic:
     data = row.model_dump()
-    data["access_key"] = redact_access_key(row.access_key)
+    data["access_key"] = public_access_key(row.access_key)
     data.pop("secret_key", None)
     data.pop("security_token", None)
+    data["scope"] = connection_scope(row.prefix)
     return TosConnectionPublic.model_validate(data)
 
 
@@ -100,16 +106,29 @@ async def create_connection(
     validate_owner_principal(
         input.owner_principal_id, ctx, resource_label="TOS connection"
     )
-    input.endpoint = https_endpoint(input.endpoint)
+    input.endpoint = enforce_endpoint_trust(
+        input.endpoint, credential_mode=input.credential_mode
+    )
     input.prefix = normalize_prefix(input.prefix)
-    if input.credential_mode == "env":
-        input.access_key = None
-        input.secret_key = None
-        input.security_token = None
-        input.credential_ref = input.credential_ref or "env"
-    else:
-        input.secret_key = seal_secret(input.secret_key)
-        input.security_token = seal_secret(input.security_token)
+    try:
+        if input.credential_mode == "env":
+            input.access_key = None
+            input.secret_key = None
+            input.security_token = None
+            input.credential_ref = input.credential_ref or "env"
+        else:
+            sealed = seal_connection_secrets(
+                {
+                    "access_key": input.access_key,
+                    "secret_key": input.secret_key,
+                    "security_token": input.security_token,
+                }
+            )
+            input.access_key = sealed["access_key"]
+            input.secret_key = sealed["secret_key"]
+            input.security_token = sealed["security_token"]
+    except TosSecretError as exc:
+        raise InvalidException(message=str(exc)) from exc
     existing = await TosConnection.one_by_fields(
         session,
         {
@@ -123,7 +142,9 @@ async def create_connection(
             message=f"TOS connection with name '{input.name}' already exists."
         )
     try:
-        created = await TosConnection.create(session, input)
+        created = await TosConnection.create(
+            session, input.model_dump(exclude={"allow_bucket_root"})
+        )
     except Exception as e:
         raise InternalServerErrorException(
             message=f"Failed to create TOS connection: {e}"
@@ -143,23 +164,30 @@ async def update_connection(
         raise NotFoundException(message=f"TOS connection {id} not found")
     assert_org_owned_writable(ctx, existing, resource_label="TOS connection")
     payload = input.model_dump(exclude_unset=True)
+    allow_bucket_root = payload.pop("allow_bucket_root", None)
     if "endpoint" in payload and payload["endpoint"]:
-        payload["endpoint"] = https_endpoint(payload["endpoint"])
+        mode = payload.get("credential_mode") or existing.credential_mode
+        payload["endpoint"] = enforce_endpoint_trust(
+            payload["endpoint"], credential_mode=mode
+        )
     if "prefix" in payload:
         payload["prefix"] = normalize_prefix(payload["prefix"])
-    if payload.get("credential_mode") == "env":
-        payload["access_key"] = None
-        payload["secret_key"] = None
-        payload["security_token"] = None
-        payload["credential_ref"] = payload.get("credential_ref") or "env"
-    else:
-        if "secret_key" in payload:
-            if payload["secret_key"] is None:
+        if payload["prefix"] == "" and not allow_bucket_root:
+            raise InvalidException(
+                message="empty prefix grants the whole bucket; set allow_bucket_root=true"
+            )
+    try:
+        if payload.get("credential_mode") == "env":
+            payload["access_key"] = None
+            payload["secret_key"] = None
+            payload["security_token"] = None
+            payload["credential_ref"] = payload.get("credential_ref") or "env"
+        else:
+            payload = seal_connection_secrets(payload)
+            if "secret_key" in payload and payload["secret_key"] is None:
                 payload.pop("secret_key")
-            else:
-                payload["secret_key"] = seal_secret(payload["secret_key"])
-        if payload.get("security_token"):
-            payload["security_token"] = seal_secret(payload["security_token"])
+    except TosSecretError as exc:
+        raise InvalidException(message=str(exc)) from exc
     try:
         await existing.update(session, payload)
     except Exception as e:

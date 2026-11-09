@@ -46,12 +46,21 @@ release.
 ```
 
 `credential_mode=env` with `credential_ref=env` uses `TOS_ACCESS_KEY` /
-`TOS_SECRET_KEY` on the assigned worker instead of stored keys. The process
-must set `TOS_ENDPOINT` (or `TOS_ALLOWED_ENDPOINTS`) to the **same** https
-host as the connection; otherwise transport is refused so env keys cannot
-be sent to an arbitrary endpoint. Inline `secret_key` / `security_token` are
-sealed at rest (`gsk1:` Fernet from `GPUSTACK_TOS_SECRET_KEY` or
-`GPUSTACK_JWT_SECRET_KEY`) and decrypted only for the assigned worker.
+`TOS_SECRET_KEY` on the **process that performs the TOS call**: the assigned
+worker for archive/pull, the control plane for catalog/size/complete verify.
+Each of those processes must set `TOS_ENDPOINT` (or `TOS_ALLOWED_ENDPOINTS`)
+to the **same** https host as the connection. Worker-only env is enough for
+pull/archive; catalog and deploy-time manifest checks on the control plane
+need the same pin **on the control plane**, or use `credential_mode=inline`.
+Inline keys never fall back to process env. Legacy `tos_endpoint` without
+`tos_connection_id` is env-only and must match the pin list.
+
+Inline `access_key` / `secret_key` / `security_token` are sealed at rest
+(`gsk1:` Fernet from **`GPUSTACK_TOS_SECRET_KEY` only** — not the JWT secret)
+and decrypted only on assigned-worker transport / control-plane catalog.
+Plaintext is never stored. Rotate with `GPUSTACK_TOS_SECRET_KEY_PREVIOUS`.
+Empty `prefix` is whole-bucket scope and requires `allow_bucket_root=true`;
+`GET` connections include `scope=prefix|bucket`.
 
 Read (`GET /v2/tos/connections`, `GET /v2/tos/connections/{id}`) returns
 redacted `access_key` and **never** `secret_key` or `security_token`. Catalog
@@ -73,7 +82,10 @@ listing is limited to that connection's bucket+prefix.
 
 Single-file GGUF: `"paths": ["Llama-3-8B-Q4_K_M.gguf"]`. Version is explicit
 and immutable. Same `(connection_id, tos_model, tos_version)` returns `409`
-`AlreadyExists` with `details.error_code=concurrent_version`.
+`AlreadyExists`. If the existing job is `error`, `details.error_code` is
+`version_retry_required` with `details.retry_job_id` — call
+`POST /v2/tos/archives/{id}/retry`, do not create a new job. In-progress jobs
+use `concurrent_version`. READY jobs use `immutable_conflict`.
 
 States: `queued` → `uploading` → `verifying` → `ready` | `error`.
 
@@ -85,18 +97,21 @@ States: `queued` → `uploading` → `verifying` → `ready` | `error`.
 | POST | `/v2/tos/archives/{id}/complete` | Assigned worker (atomic finish) |
 | POST | `/v2/tos/archives/{id}/retry` | Owner (does not delete READY local files) |
 | GET | `/v2/tos/archives/{id}/transport` | Assigned worker only |
+| GET | `/v2/tos/pull/{model_file_id}/transport` | Assigned worker only (import/deploy) |
 
 `error_code` values: `incomplete_upload`, `immutable_conflict`,
-`concurrent_version`, `checksum_mismatch`, `disk_full`, `worker_unreachable`,
-`invalid_credentials`, `path_escape`, `prefix_denied`, `not_ready`,
-`source_mismatch`, `format_unsupported`, `connection_not_found`.
+`concurrent_version`, `version_retry_required`, `checksum_mismatch`,
+`disk_full`, `worker_unreachable`, `invalid_credentials`, `path_escape`,
+`prefix_denied`, `not_ready`, `source_mismatch`, `format_unsupported`,
+`connection_not_found`, `manifest_mismatch`.
 
 Objects are uploaded first; `manifest.json` is written last with TOS
 `forbid_overwrite`. A crash mid-upload leaves no catalog entry. Retry **re-hashes**
 existing content-addressed objects before skipping them; size/SHA mismatch
 re-uploads. `POST .../complete` is idempotent when the job is already `ready`,
-requires `provenance.manifest_sha256`, and keeps `origin_*` from the ModelFile
-record (worker payloads cannot replace them). Workers reclaim `queued`,
+requires `provenance.manifest_sha256`, **re-fetches the committed remote
+manifest**, and keeps `origin_*` from the ModelFile record (worker payloads
+and `PUT /archives/{id}` cannot replace them). Workers reclaim `queued`,
 `uploading`, and `verifying` jobs after restart. SDK `forbid_overwrite` and
 cross-process DB commit vs object PUT atomicity are **not** proven on live TOS.
 
@@ -113,11 +128,14 @@ Then reuse:
 - `POST /v2/models` with `source=tos`, same coordinates, existing
   `backend`, `cluster_id`, `gpu_selector`, `replicas`
 
-Backend/format: GGUF is detected from `provenance.gguf`, `selected_paths`,
-or `*.gguf` coordinates **before deploy**. `POST /v2/models` rejects TOS GGUF
-with vLLM / SGLang / MindIE / VoxBox. `trust_remote_code` is never enabled by
-this path. There is **no** `/tos/browse` route; catalog is
-`GET /v2/tos/releases` and `GET /v2/tos/releases/detail`.
+`GET /v2/tos/releases` fills `gguf`, `object_count`, `total_bytes` from the
+trusted manifest and sets `catalog_verified=true`. If the manifest cannot be
+read, those fields are null and `catalog_verified=false` (unknown — not a
+verified hit). `POST /v2/models` stamps provenance from that manifest and
+**ignores client `provenance.gguf`**. TOS GGUF cannot use vLLM / SGLang /
+MindIE / VoxBox. `trust_remote_code` is never enabled by this path. There is
+**no** `/tos/browse` route; catalog is `GET /v2/tos/releases` and
+`GET /v2/tos/releases/detail`.
 
 ## Auto-archive (HF / ModelScope)
 

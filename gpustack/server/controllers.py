@@ -5425,6 +5425,19 @@ async def _maybe_enqueue_auto_archive(file: ModelFile) -> None:
                 current.archive_error_message = "auto_archive connection is missing"
                 await current.update(session)
                 return
+            from gpustack.api.exceptions import ForbiddenException
+            from gpustack.utils.tos_credentials import assert_connection_owned_by
+
+            try:
+                assert_connection_owned_by(connection, current.owner_principal_id)
+            except ForbiddenException:
+                current.archive_state = TosArchiveStateEnum.ERROR.value
+                current.archive_error_code = "connection_not_found"
+                current.archive_error_message = (
+                    "auto_archive connection is not owned by this organization"
+                )
+                await current.update(session)
+                return
             await enqueue_archive_job(
                 session,
                 current,
@@ -5438,11 +5451,19 @@ async def _maybe_enqueue_auto_archive(file: ModelFile) -> None:
         from gpustack.api.exceptions import AlreadyExistsException
 
         if isinstance(exc, AlreadyExistsException):
-            logger.info(
-                "auto_archive for model file %s hit an existing version: %s",
-                file.id,
-                exc,
-            )
+            details = getattr(exc, "details", None) or {}
+            if details.get("error_code") == "version_retry_required":
+                logger.info(
+                    "auto_archive for model file %s needs retry of job %s",
+                    file.id,
+                    details.get("retry_job_id"),
+                )
+            else:
+                logger.info(
+                    "auto_archive for model file %s hit an existing version: %s",
+                    file.id,
+                    exc,
+                )
             return
         logger.error(
             "Failed to enqueue auto_archive for model file %s: %s", file.id, exc

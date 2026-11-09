@@ -644,6 +644,15 @@ class ModelFileDownloadTask:
         if self._cancel_flag.is_set():
             raise asyncio.CancelledError('Download cancelled')
 
+    def _tos_pull_client(self):
+        from gpustack.client.tos_archive_client import TosArchiveClient
+        from gpustack.utils.tos_credentials import client_from_transport
+
+        transport = TosArchiveClient(self._clientset.http_client).pull_transport(
+            self._model_file.id
+        )
+        return client_from_transport(transport)
+
     def _download_model_file(self):
         self._check_cancelled()
         self._write_to_instance_download_logs(
@@ -670,6 +679,9 @@ class ModelFileDownloadTask:
             monitor.start()
             monitors.append(monitor)
         try:
+            tos_client = None
+            if self._model_file.source == SourceEnum.TOS:
+                tos_client = self._tos_pull_client()
             model_paths = downloaders.download_model(
                 self._model_file,
                 local_dir=self._model_file.local_dir,
@@ -678,6 +690,7 @@ class ModelFileDownloadTask:
                 model_scope_files=self._modelscope_selected_files,
                 huggingface_progress=self._report_huggingface_progress,
                 huggingface_cancel_check=self._check_cancelled,
+                tos_client=tos_client,
             )
         except (Exception, KeyboardInterrupt):
             self._check_cancelled()
@@ -707,13 +720,16 @@ class ModelFileDownloadTask:
         if extra is None:
             # Validation failed; ERROR state already reported by _resolve_lora_state.
             return
+        ready_kwargs = dict(extra)
+        if getattr(self._model_file, "provenance", None):
+            ready_kwargs["provenance"] = self._model_file.provenance
 
         self._update_model_file(
             self._model_file.id,
             state=ModelFileStateEnum.READY,
             download_progress=100,
             resolved_paths=model_paths,
-            **extra,
+            **ready_kwargs,
         )
         self._write_to_instance_download_logs(
             f"Successfully downloaded {self._model_file.readable_source}"

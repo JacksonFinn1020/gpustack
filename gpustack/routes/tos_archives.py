@@ -40,17 +40,23 @@ from gpustack.server.db import async_session
 from gpustack.server.deps import SessionDep, TenantContextDep
 from gpustack.server.tos_bindings import (
     load_visible_connection,
+    verify_committed_manifest,
+)
+from gpustack.utils.tos_credentials import (
+    access_from_connection,
+    assert_connection_owned_by,
+    client_from_access,
 )
 from gpustack.utils.tos_scope import (
     artifact_uri,
     classify_archive_error,
-    env_endpoint_allows,
     looks_gguf,
     normalize_prefix,
     object_key_in_prefix,
 )
-from gpustack.utils.tos_secrets import open_secret
+from gpustack.utils.tos_secrets import TosSecretError
 from gpustack.worker import tos_storage
+from gpustack.worker.tos_storage import provenance_from_manifest
 
 router = APIRouter()
 
@@ -68,20 +74,31 @@ def _require_assigned_worker(ctx: TenantContext, job: TosArchiveJob) -> None:
 
 
 def _sdk_client(connection: TosConnection):
-    if connection.credential_mode == "env":
-        if not env_endpoint_allows(connection.endpoint):
-            raise InvalidException(
-                message="env credentials cannot be used unless TOS_ENDPOINT "
-                "(or TOS_ALLOWED_ENDPOINTS) matches this connection endpoint",
-                details={"error_code": TosArchiveErrorCode.INVALID_CREDENTIALS.value},
-            )
-        return tos_storage.SdkTosClient(connection.endpoint, connection.region)
-    return tos_storage.SdkTosClient(
-        connection.endpoint,
-        connection.region,
-        access_key=connection.access_key,
-        secret_key=open_secret(connection.secret_key),
-        security_token=open_secret(connection.security_token),
+    try:
+        return client_from_access(access_from_connection(connection))
+    except TosSecretError as exc:
+        raise InvalidException(message=str(exc)) from exc
+
+
+def _transport_payload(connection: TosConnection, tos_model: str, tos_version: str):
+    try:
+        access = access_from_connection(
+            connection, tos_model=tos_model, tos_version=tos_version
+        )
+    except TosSecretError as exc:
+        raise InvalidException(message=str(exc)) from exc
+    return TosTransport(
+        endpoint=access.endpoint,
+        region=access.region,
+        bucket=access.bucket,
+        prefix=normalize_prefix(access.prefix),
+        tos_model=tos_model,
+        tos_version=tos_version,
+        credential_mode=access.credential_mode,
+        credential_ref=access.credential_ref,
+        access_key=access.access_key,
+        secret_key=access.secret_key,
+        security_token=access.security_token,
     )
 
 
@@ -152,14 +169,7 @@ async def create_archive(
     if not model_file.resolved_paths:
         raise InvalidException(message="READY model file has no resolved local path")
     connection = await load_visible_connection(session, ctx, input.connection_id)
-    if (
-        model_file.owner_principal_id
-        and connection.owner_principal_id
-        and model_file.owner_principal_id != connection.owner_principal_id
-    ):
-        raise ForbiddenException(
-            message="TOS connection is not in the same organization as the model file"
-        )
+    assert_connection_owned_by(connection, model_file.owner_principal_id)
     from gpustack.server.tos_bindings import enqueue_archive_job
 
     try:
@@ -195,6 +205,7 @@ async def update_archive(
     if job.state == TosArchiveStateEnum.READY.value:
         raise InvalidException(message="READY archive jobs are immutable")
     payload = input.model_dump(exclude_unset=True)
+    payload.pop("provenance", None)
     if payload.get("state") == TosArchiveStateEnum.READY.value:
         raise InvalidException(message="Use POST /archives/{id}/complete to finish")
     try:
@@ -222,14 +233,17 @@ async def complete_archive(
     job = await TosArchiveJob.one_by_id(session, id)
     assert_resource_visible(ctx, job, not_found_message=f"Archive job {id} not found")
     _require_assigned_worker(ctx, job)
-    if job.state == TosArchiveStateEnum.READY.value:
-        return job
     incoming = input.provenance.model_dump(exclude_none=True)
     if not incoming.get("manifest_sha256"):
         raise InvalidException(message="complete requires provenance.manifest_sha256")
-    stored = dict(job.provenance or {})
-    origin = {key: stored[key] for key in stored if str(key).startswith("origin_")}
-    job.provenance = {**stored, **incoming, **origin}
+    connection = await TosConnection.one_by_id(session, job.connection_id)
+    if not connection or connection.deleted_at is not None:
+        raise NotFoundException(message="TOS connection not found")
+    assert_connection_owned_by(connection, job.owner_principal_id)
+    if job.state == TosArchiveStateEnum.READY.value:
+        verify_committed_manifest(connection, job, incoming)
+        return job
+    job.provenance = verify_committed_manifest(connection, job, incoming)
     job.state = TosArchiveStateEnum.READY.value
     job.progress = 100
     job.size = input.size
@@ -281,38 +295,49 @@ async def get_archive_transport(session: SessionDep, ctx: TenantContextDep, id: 
     if job.state == TosArchiveStateEnum.READY.value:
         raise InvalidException(message="READY jobs no longer expose transport secrets")
     connection = await TosConnection.one_by_id(session, job.connection_id)
-    if not connection:
+    if not connection or connection.deleted_at is not None:
         raise NotFoundException(message="TOS connection not found")
-    if connection.credential_mode == "env":
-        if not env_endpoint_allows(connection.endpoint):
-            raise InvalidException(
-                message="env credentials cannot be used unless TOS_ENDPOINT "
-                "(or TOS_ALLOWED_ENDPOINTS) matches this connection endpoint",
-                details={"error_code": TosArchiveErrorCode.INVALID_CREDENTIALS.value},
-            )
-        return TosTransport(
-            endpoint=connection.endpoint,
-            region=connection.region,
-            bucket=connection.bucket,
-            prefix=normalize_prefix(connection.prefix),
-            tos_model=job.tos_model,
-            tos_version=job.tos_version,
-            credential_mode=connection.credential_mode,
-            credential_ref=connection.credential_ref or "env",
-        )
-    return TosTransport(
-        endpoint=connection.endpoint,
-        region=connection.region,
-        bucket=connection.bucket,
-        prefix=normalize_prefix(connection.prefix),
-        tos_model=job.tos_model,
-        tos_version=job.tos_version,
-        credential_mode=connection.credential_mode,
-        credential_ref=connection.credential_ref,
-        access_key=connection.access_key,
-        secret_key=open_secret(connection.secret_key),
-        security_token=open_secret(connection.security_token),
+    assert_connection_owned_by(connection, job.owner_principal_id)
+    return _transport_payload(connection, job.tos_model, job.tos_version)
+
+
+@router.get("/pull/{model_file_id}/transport", response_model=TosTransport)
+async def get_pull_transport(
+    session: SessionDep, ctx: TenantContextDep, model_file_id: int
+):
+    model_file = await ModelFile.one_by_id(session, model_file_id)
+    assert_resource_visible(
+        ctx,
+        model_file,
+        not_found_message=f"Model file {model_file_id} not found",
     )
+    if ctx.user is None or ctx.user.kind != PrincipalType.SYSTEM:
+        raise ForbiddenException(message="Only the assigned worker may call this")
+    if _worker_id(ctx) != model_file.worker_id:
+        raise ForbiddenException(message="Model file is assigned to another worker")
+    connection_id = model_file.tos_connection_id
+    if not connection_id:
+        from gpustack.utils.tos_credentials import access_from_legacy_source
+
+        try:
+            access = access_from_legacy_source(model_file)
+        except tos_storage.TosStorageError as exc:
+            raise InvalidException(message=str(exc)) from exc
+        return TosTransport(
+            endpoint=access.endpoint,
+            region=access.region,
+            bucket=access.bucket,
+            prefix=access.prefix,
+            tos_model=model_file.tos_model,
+            tos_version=model_file.tos_version,
+            credential_mode=access.credential_mode,
+            credential_ref=access.credential_ref,
+        )
+    connection = await TosConnection.one_by_id(session, connection_id)
+    if not connection or connection.deleted_at is not None:
+        raise NotFoundException(message="TOS connection not found")
+    assert_connection_owned_by(connection, model_file.owner_principal_id)
+    return _transport_payload(connection, model_file.tos_model, model_file.tos_version)
 
 
 @router.get("/releases", response_model=list[TosReleaseListItem])
@@ -336,19 +361,42 @@ async def list_release_catalog(
     for entry in listed:
         if tos_model and entry["tos_model"] != tos_model:
             continue
-        items.append(
-            TosReleaseListItem(
-                connection_id=connection.id,
-                tos_model=entry["tos_model"],
-                tos_version=entry["tos_version"],
-                artifact_uri=artifact_uri(
-                    connection.bucket,
-                    prefix,
-                    entry["tos_model"],
-                    entry["tos_version"],
+        uri = artifact_uri(
+            connection.bucket,
+            prefix,
+            entry["tos_model"],
+            entry["tos_version"],
+        )
+        item = TosReleaseListItem(
+            connection_id=connection.id,
+            tos_model=entry["tos_model"],
+            tos_version=entry["tos_version"],
+            artifact_uri=uri,
+            catalog_verified=False,
+        )
+        try:
+            location = tos_storage.TosLocation(
+                endpoint=connection.endpoint,
+                region=connection.region,
+                bucket=connection.bucket,
+                model=entry["tos_model"],
+                version=entry["tos_version"],
+                release_path=tos_storage.resolve_release_path(
+                    entry["tos_model"], entry["tos_version"], prefix=prefix
                 ),
             )
-        )
+            manifest = tos_storage.fetch_manifest(location, client)
+            stamped = provenance_from_manifest(manifest, location)
+            item.object_count = stamped.get("object_count")
+            item.total_bytes = tos_storage.manifest_total_size(manifest)
+            item.gguf = stamped.get("gguf")
+            item.catalog_verified = True
+        except tos_storage.TosStorageError:
+            item.gguf = None
+            item.object_count = None
+            item.total_bytes = None
+            item.catalog_verified = False
+        items.append(item)
     return items
 
 

@@ -17,6 +17,7 @@ def test_worker_runtime_includes_archive_callbacks():
     endpoints = {item[1] for item in SYSTEM_ROUTES}
     assert tos_archives.list_archives in endpoints
     assert tos_archives.get_archive_transport in endpoints
+    assert tos_archives.get_pull_transport in endpoints
     assert tos_archives.complete_archive in endpoints
     assert tos_archives.create_archive not in endpoints
     assert tos_archives.retry_archive not in endpoints
@@ -38,6 +39,7 @@ def test_connection_create_requires_inline_secrets():
         endpoint="https://tos-cn-beijing.volces.com",
         region="cn-beijing",
         bucket="weights",
+        prefix="org-a/models",
         access_key="AKLTABC",
         secret_key="secret",
     )
@@ -46,6 +48,7 @@ def test_connection_create_requires_inline_secrets():
         endpoint="https://tos-cn-beijing.volces.com",
         region="cn-beijing",
         bucket="weights",
+        prefix="org-a/models",
         credential_mode="env",
         credential_ref="env",
     )

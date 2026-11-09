@@ -9,10 +9,37 @@ from typing import Optional
 from gpustack.api.exceptions import InvalidException
 
 
+def require_endpoint_allowlist() -> bool:
+    """When set, every TOS endpoint (inline included) must match the pin list."""
+    return os.environ.get("GPUSTACK_TOS_REQUIRE_ENDPOINT_ALLOWLIST", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def enforce_endpoint_trust(endpoint: str, *, credential_mode: str) -> str:
+    """HTTPS syntactic checks plus env pin / optional production allowlist.
+
+    DNS rebinding and SDK HTTP redirects are not proven against the live TOS
+    SDK in this repo. Production must set ``GPUSTACK_TOS_REQUIRE_ENDPOINT_ALLOWLIST``
+    and ``TOS_ALLOWED_ENDPOINTS`` (or ``TOS_ENDPOINT``).
+    """
+    target = https_endpoint(endpoint)
+    mode = (credential_mode or "inline").lower()
+    if mode == "env" or require_endpoint_allowlist():
+        if not env_endpoint_allows(target):
+            raise InvalidException(
+                message="TOS endpoint is not in TOS_ENDPOINT / TOS_ALLOWED_ENDPOINTS"
+            )
+    return target
+
+
 def normalize_prefix(prefix: Optional[str]) -> str:
     """Return a relative prefix without a leading slash.
 
-    Empty prefix means the bucket root. ``..`` and absolute paths are rejected.
+    Empty prefix is the whole bucket and must be opted into with
+    ``allow_bucket_root`` on create. ``..`` and absolute paths are rejected.
     """
     if prefix is None:
         return ""
@@ -141,4 +168,33 @@ def classify_archive_error(exc: BaseException) -> str:
         return TosArchiveErrorCode.PATH_ESCAPE.value
     if "prefix" in message:
         return TosArchiveErrorCode.PREFIX_DENIED.value
+    refused = isinstance(
+        exc,
+        (
+            ConnectionError,
+            ConnectionRefusedError,
+            TimeoutError,
+        ),
+    )
+    errno = getattr(exc, "errno", None)
+    if refused or errno in (
+        getattr(os, "ECONNREFUSED", 111),
+        getattr(os, "ETIMEDOUT", 110),
+        getattr(os, "EHOSTUNREACH", 113),
+        getattr(os, "ENETUNREACH", 101),
+    ):
+        return TosArchiveErrorCode.WORKER_UNREACHABLE.value
+    if any(
+        token in message
+        for token in (
+            "connection refused",
+            "timed out",
+            "timeout",
+            "unreachable",
+            "name or service not known",
+            "temporary failure in name resolution",
+            "nodename nor servname",
+        )
+    ):
+        return TosArchiveErrorCode.WORKER_UNREACHABLE.value
     return TosArchiveErrorCode.INCOMPLETE_UPLOAD.value

@@ -50,3 +50,13 @@ def test_classify_immutable_and_disk():
     err = OSError(28, "No space left on device")
     err.errno = 28
     assert classify_archive_error(err) == "disk_full"
+
+
+def test_classify_connection_refused_is_worker_unreachable():
+    assert (
+        classify_archive_error(ConnectionRefusedError("Connection refused"))
+        == "worker_unreachable"
+    )
+    refused = OSError(111, "Connection refused")
+    refused.errno = 111
+    assert classify_archive_error(refused) == "worker_unreachable"

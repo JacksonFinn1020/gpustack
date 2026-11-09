@@ -127,6 +127,7 @@ SYSTEM_ROUTES = frozenset(
         ("PUT", tos_archives.update_archive),
         ("POST", tos_archives.complete_archive),
         ("GET", tos_archives.get_archive_transport),
+        ("GET", tos_archives.get_pull_transport),
     }
 )
 # Cluster credentials serve bootstrap and controller Kubernetes operations.

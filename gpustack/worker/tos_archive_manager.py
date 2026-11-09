@@ -92,13 +92,9 @@ class TosArchiveManager:
                 prefix=transport.prefix,
             ),
         )
-        client = tos_storage.SdkTosClient(
-            transport.endpoint,
-            transport.region,
-            access_key=transport.access_key,
-            secret_key=transport.secret_key,
-            security_token=transport.security_token,
-        )
+        from gpustack.utils.tos_credentials import client_from_transport
+
+        client = client_from_transport(transport)
         lock_path = root / ".tos-archive.lock"
         with HeartbeatSoftFileLock(str(lock_path)):
             self._client.update(
@@ -118,8 +114,10 @@ class TosArchiveManager:
                 )
 
             extra = {
-                "backend_hint": (job.provenance or {}).get("backend_hint"),
-                "origin_source": (job.provenance or {}).get("origin_source"),
+                key: value
+                for key, value in (job.provenance or {}).items()
+                if str(key).startswith("origin_")
+                or key in ("backend_hint", "upstream_revision")
             }
             manifest = tos_storage.upload_release(
                 location,

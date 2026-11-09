@@ -42,18 +42,18 @@ Do not treat a green `pytest` run as A–H PASS on a real cluster. Parametrized
 `test_system_route_access` counts (hundreds of method/path/kind rows) only
 prove **management allowlisting**, not archive upload or auto_archive.
 
-## A–H coverage
+## A–H coverage (user matrix)
 
 | ID | Intent | This PR (mock) | Still field-only |
 | --- | --- | --- | --- |
-| A | Archive READY directory | FakeTos full-tree + SHA skip/replace | Live TOS |
-| B | Archive single file (GGUF) | `relatives` + provenance.gguf + backend reject | Live TOS |
-| C | Import TOS version → worker READY → schedule | existing TosDownloader + ModelFile | GPU start |
-| D | Auto-archive after HF/MS, independent error | controller keeps READY on enqueue failure | Live hub+TOS |
-| E | Concurrent same version | unique constraint + `forbid_overwrite` | two workers |
-| F | Retry incomplete upload / worker restart | SHA re-hash; reclaim uploading/verifying | kill mid-PUT |
-| G | Auth, redaction, prefix jail, env endpoint pin | unit + contract + handler gates | stolen token |
-| H | Old HF/MS/local records + migration rollback | Alembic `e1f2a3b4c5d6`; local delete does not delete TOS | restore DB snapshot |
+| A | HF manual archive | FakeTos upload from READY HF cache | Live TOS + hub |
+| B | MS auto-archive | controller enqueue + owner check | Live hub+TOS |
+| C | TOS import | worker pull transport + SHA download | Live TOS |
+| D | TOS deploy | POST models stamps manifest; backend reject | GPU start |
+| E | Upstream hub down, TOS deploy still works | not executed here | disconnect hub |
+| F | Cache reuse | `.deployment-manifest.json` SHA skip | worker disk |
+| G | Six-fault recovery (upload kill, download kill, bad keys, disk full, checksum, worker down) | error classify + retry states | inject on site |
+| H | Old HF/MS/local_path + legacy TOS coordinates | alembic keeps old rows; sources still valid | restore DB snapshot |
 
 ## Field script (do not run in CI with real credentials)
 
@@ -97,9 +97,16 @@ cache; it does not call TOS delete.
   `localhost` / metadata hostnames are rejected. SDK HTTP redirects are
   **unverified live**.
 - `credential_mode=env` will not mint transport unless `TOS_ENDPOINT` matches.
-- Connection secrets are Fernet-sealed at rest when a server key is present;
-  they are decrypted only on assigned-worker transport. Watch/list redact
-  `access_key` and never emit `secret_key`.
+- Connection secrets are Fernet-sealed at rest with `GPUSTACK_TOS_SECRET_KEY`
+  (fail closed; JWT is not used). They are decrypted only on assigned-worker
+  transport and control-plane catalog. Watch/list redact `access_key` and
+  never emit `secret_key`. Unsealed rows cannot be opened; recreate the
+  connection. Rotate with `GPUSTACK_TOS_SECRET_KEY_PREVIOUS`.
+- Endpoint trust: HTTPS, no credentials/path, block private IP literals and
+  metadata hosts. `credential_mode=env` and
+  `GPUSTACK_TOS_REQUIRE_ENDPOINT_ALLOWLIST=true` require `TOS_ENDPOINT` /
+  `TOS_ALLOWED_ENDPOINTS`. DNS rebinding and SDK redirects are **unproven**
+  on live TOS; the executable gate is the allowlist.
 - Connection `prefix` jails catalog keys and archive object keys.
 - Archive scan rejects `..` and escaping symlinks.
 - `trust_remote_code` is not flipped on.

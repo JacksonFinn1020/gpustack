@@ -42,6 +42,8 @@ class TosArchiveErrorCode(str, Enum):
     SOURCE_MISMATCH = "source_mismatch"
     FORMAT_UNSUPPORTED = "format_unsupported"
     CONNECTION_NOT_FOUND = "connection_not_found"
+    VERSION_RETRY_REQUIRED = "version_retry_required"
+    MANIFEST_MISMATCH = "manifest_mismatch"
 
     def __str__(self):
         return self.value
@@ -90,7 +92,7 @@ class TosConnectionBase(SQLModel):
         default="",
         description=(
             "Relative object prefix this Org may read and write. "
-            "Empty is the bucket root."
+            "Empty is the whole bucket and requires allow_bucket_root."
         ),
     )
     credential_mode: str = Field(default=TosCredentialMode.INLINE.value)
@@ -112,10 +114,22 @@ class TosConnectionCreate(TosConnectionBase):
         description="Write-only. Never returned on read.",
     )
     security_token: Optional[str] = Field(default=None, description="Write-only STS.")
+    allow_bucket_root: bool = Field(
+        default=False,
+        description=(
+            "Required when prefix is empty. Empty prefix authorizes the "
+            "entire bucket, not a model subdirectory."
+        ),
+    )
 
     @model_validator(mode="after")
     def credentials_present(self):
         mode = self.credential_mode or TosCredentialMode.INLINE.value
+        prefix = (self.prefix or "").strip()
+        if not prefix and not self.allow_bucket_root:
+            raise ValueError(
+                "empty prefix grants the whole bucket; set allow_bucket_root=true"
+            )
         if mode == TosCredentialMode.ENV.value:
             if (self.credential_ref or "env") != "env":
                 raise ValueError("credential_ref for env mode must be 'env'")
@@ -133,6 +147,7 @@ class TosConnectionUpdate(SQLModel):
     region: Optional[str] = None
     bucket: Optional[str] = None
     prefix: Optional[str] = None
+    allow_bucket_root: Optional[bool] = None
     credential_mode: Optional[str] = None
     credential_ref: Optional[str] = None
     access_key: Optional[str] = None
@@ -158,6 +173,10 @@ class TosConnectionPublic(TosConnectionBase, PublicFields):
     access_key: Optional[str] = Field(
         default=None,
         description="Present when stored inline; secret_key is never included.",
+    )
+    scope: str = Field(
+        default="prefix",
+        description="prefix for a jailed prefix; bucket when prefix is empty.",
     )
 
     model_config = ConfigDict(
@@ -268,7 +287,6 @@ class TosArchiveJobUpdate(SQLModel):
     uploaded_bytes: Optional[int] = None
     state_message: Optional[str] = None
     error_code: Optional[str] = None
-    provenance: Optional[Dict] = None
 
 
 class TosArchiveCompleteRequest(SQLModel):
@@ -377,3 +395,4 @@ class TosReleaseListItem(SQLModel):
     object_count: Optional[int] = None
     total_bytes: Optional[int] = None
     gguf: Optional[bool] = None
+    catalog_verified: bool = False

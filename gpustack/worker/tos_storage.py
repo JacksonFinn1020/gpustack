@@ -317,18 +317,28 @@ class SdkTosClient:
         access_key: Optional[str] = None,
         secret_key: Optional[str] = None,
         security_token: Optional[str] = None,
+        *,
+        use_env: bool = False,
     ):
-        ak = access_key if access_key is not None else os.environ.get("TOS_ACCESS_KEY")
-        sk = secret_key if secret_key is not None else os.environ.get("TOS_SECRET_KEY")
-        token = (
-            security_token
-            if security_token is not None
-            else os.environ.get("TOS_SECURITY_TOKEN")
-        )
+        if use_env:
+            from gpustack.utils.tos_scope import env_endpoint_allows
+
+            if not env_endpoint_allows(endpoint):
+                raise TosStorageError(
+                    "env TOS credentials require TOS_ENDPOINT or "
+                    "TOS_ALLOWED_ENDPOINTS to match this endpoint"
+                )
+            ak = os.environ.get("TOS_ACCESS_KEY")
+            sk = os.environ.get("TOS_SECRET_KEY")
+            token = os.environ.get("TOS_SECURITY_TOKEN")
+        else:
+            ak = access_key
+            sk = secret_key
+            token = security_token
         if not ak or not sk:
             raise TosStorageError(
-                "TOS credentials are missing: store them on the TosConnection "
-                "or set TOS_ACCESS_KEY and TOS_SECRET_KEY when credential_mode=env"
+                "TOS credentials are missing: inline connections must supply "
+                "keys; env mode must set TOS_ACCESS_KEY and TOS_SECRET_KEY"
             )
         try:
             import tos
@@ -511,6 +521,42 @@ def manifest_bytes(manifest: Dict[str, Any]) -> bytes:
 
 def manifest_total_size(manifest: Dict[str, Any]) -> int:
     return sum(int(entry["size"]) for entry in manifest.get("files") or [])
+
+
+_ORIGIN_MANIFEST_KEYS = (
+    "origin_source",
+    "origin_huggingface_repo_id",
+    "origin_huggingface_filename",
+    "origin_model_scope_model_id",
+    "origin_model_scope_file_path",
+    "origin_local_path",
+    "origin_worker_id",
+    "origin_model_file_id",
+    "upstream_revision",
+    "backend_hint",
+)
+
+
+def provenance_from_manifest(
+    manifest: Dict[str, Any], location: TosLocation
+) -> Dict[str, Any]:
+    """Trusted catalog identity for import. Client booleans are not used."""
+    from gpustack.utils.tos_scope import looks_gguf
+
+    files = [entry["path"] for entry in manifest.get("files") or []]
+    raw = manifest_bytes(manifest)
+    payload: Dict[str, Any] = {
+        "artifact_uri": location.uri,
+        "manifest_sha256": hashlib.sha256(raw).hexdigest(),
+        "manifest_bytes": len(raw),
+        "object_count": len(files),
+        "gguf": looks_gguf(files),
+        "selected_paths": files,
+    }
+    for key in _ORIGIN_MANIFEST_KEYS:
+        if manifest.get(key) is not None:
+            payload[key] = manifest[key]
+    return payload
 
 
 def _iter_local_files(root: Path, relatives: Optional[List[str]]) -> List[Path]:

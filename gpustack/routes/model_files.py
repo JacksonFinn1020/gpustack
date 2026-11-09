@@ -177,9 +177,17 @@ async def create_model_file(
     session: SessionDep, ctx: TenantContextDep, model_file_in: ModelFileCreate
 ):
     cluster = await _authorize_model_file_worker(session, ctx, model_file_in.worker_id)
-    from gpustack.server.tos_bindings import bind_tos_connection
+    from gpustack.server.tos_bindings import (
+        bind_auto_archive_connection,
+        bind_tos_connection,
+    )
 
-    await bind_tos_connection(session, ctx, model_file_in)
+    await bind_tos_connection(
+        session, ctx, model_file_in, expected_owner=cluster.owner_principal_id
+    )
+    await bind_auto_archive_connection(
+        session, ctx, model_file_in, expected_owner=cluster.owner_principal_id
+    )
     fields = {
         "worker_id": model_file_in.worker_id,
         "source_index": model_file_in.model_source_index,
