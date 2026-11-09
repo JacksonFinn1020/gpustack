@@ -13,6 +13,7 @@ from gpustack.api.exceptions import (
     InternalServerErrorException,
     InvalidException,
     NotFoundException,
+    ServiceUnavailableException,
 )
 from gpustack.api.tenant import (
     TenantContext,
@@ -22,18 +23,21 @@ from gpustack.api.tenant import (
     tenant_list_conditions,
 )
 from gpustack.schemas.clusters import Cluster
-from gpustack.schemas.workers import Worker
+from gpustack.schemas.workers import Worker, WorkerStateEnum
 from gpustack.server.db import async_session
 from gpustack.server.deps import SessionDep, TenantContextDep
 from gpustack.schemas.model_files import (
     ModelFile,
     ModelFileCreate,
+    ModelFileEntriesPublic,
+    ModelFileEntryPublic,
     ModelFileListParams,
     ModelFilePublic,
     ModelFileStateEnum,
     ModelFileUpdate,
     ModelFilesPublic,
 )
+from gpustack.schemas.common import Pagination
 
 router = APIRouter()
 
@@ -177,6 +181,17 @@ async def create_model_file(
     session: SessionDep, ctx: TenantContextDep, model_file_in: ModelFileCreate
 ):
     cluster = await _authorize_model_file_worker(session, ctx, model_file_in.worker_id)
+    from gpustack.server.tos_bindings import (
+        bind_auto_archive_connection,
+        bind_tos_connection,
+    )
+
+    await bind_tos_connection(
+        session, ctx, model_file_in, expected_owner=cluster.owner_principal_id
+    )
+    await bind_auto_archive_connection(
+        session, ctx, model_file_in, expected_owner=cluster.owner_principal_id
+    )
     fields = {
         "worker_id": model_file_in.worker_id,
         "source_index": model_file_in.model_source_index,
@@ -305,3 +320,113 @@ async def reset_model_file(session: SessionDep, ctx: TenantContextDep, id: int):
         raise InternalServerErrorException(message=f"Failed to update model file: {e}")
 
     return model_file
+
+
+@router.get(
+    "/{id}/files",
+    response_model=ModelFileEntriesPublic,
+)
+async def list_model_file_files(
+    session: SessionDep,
+    ctx: TenantContextDep,
+    id: int,
+    after: Optional[str] = None,
+    perPage: int = 100,
+):
+    """Relative files under a READY cache for TOS single-file archive.
+
+    ``path`` values are the same strings as ``POST /v2/tos/archives`` ``paths``.
+    The control plane sends the ModelFile id to the assigned worker;
+    callers cannot pass a filesystem path.
+    """
+    from gpustack.client.worker_filesystem_client import WorkerFilesystemClient
+    from gpustack.utils.model_file_listing import (
+        DEFAULT_PER_PAGE,
+        MAX_PER_PAGE,
+        filter_worker_listing_items,
+        sanitize_archive_relative,
+    )
+
+    model_file = await ModelFile.one_by_id(session, id)
+    worker = await _ready_listing_target(session, ctx, model_file, id)
+    limit = DEFAULT_PER_PAGE if perPage < 1 else min(perPage, MAX_PER_PAGE)
+    if after:
+        after = sanitize_archive_relative(after)
+    try:
+        async with WorkerFilesystemClient() as fs_client:
+            remote = await fs_client.list_archive_files(
+                worker, model_file.id, after=after, limit=limit
+            )
+    except Exception as exc:
+        _raise_listing_transport_error(exc, worker)
+        raise
+    dumped = [
+        item.model_dump() if hasattr(item, "model_dump") else item
+        for item in remote.items
+    ]
+    safe = filter_worker_listing_items(dumped)
+    if remote.items and not safe:
+        raise InvalidException(
+            message="assigned worker returned untrusted listing paths",
+            details={"error_code": "path_escape"},
+        )
+    page = Pagination(
+        page=1,
+        perPage=limit,
+        total=len(safe),
+        totalPage=1 if not remote.truncated else 2,
+    )
+    return ModelFileEntriesPublic(
+        items=[ModelFileEntryPublic(path=item.path, size=item.size) for item in safe],
+        pagination=page,
+        truncated=remote.truncated,
+        next_after=remote.next_after if remote.truncated else None,
+        root_kind=remote.root_kind,
+    )
+
+
+async def _ready_listing_target(session, ctx, model_file, id: int):
+    assert_resource_visible(
+        ctx, model_file, not_found_message=f"Model file {id} not found"
+    )
+    if model_file.state != ModelFileStateEnum.READY:
+        raise InvalidException(
+            message="Only READY model files can list archive paths",
+            details={"error_code": "not_ready"},
+        )
+    if not model_file.worker_id:
+        raise InvalidException(message="Model file has no assigned worker")
+    if not model_file.resolved_paths:
+        raise InvalidException(message="READY model file has no resolved local path")
+    worker = await Worker.one_by_id(session, model_file.worker_id)
+    if worker is None or worker.deleted_at is not None:
+        raise NotFoundException(message=f"Worker {model_file.worker_id} not found")
+    if worker.state in (
+        WorkerStateEnum.UNREACHABLE,
+        WorkerStateEnum.NOT_READY,
+        WorkerStateEnum.ERROR,
+        WorkerStateEnum.DELETING,
+    ):
+        raise ServiceUnavailableException(
+            message=f"assigned worker {worker.id} is {worker.state}",
+            details={"error_code": "worker_unreachable"},
+        )
+    return worker
+
+
+def _raise_listing_transport_error(exc: Exception, worker: Worker) -> None:
+    text = str(exc)
+    if "status=404" in text:
+        raise InvalidException(
+            message="READY cache directory does not exist on the assigned worker",
+            details={"error_code": "cache_missing"},
+        ) from exc
+    if "status=403" in text:
+        raise InvalidException(
+            message="assigned worker refused the cache path",
+            details={"error_code": "path_escape"},
+        ) from exc
+    raise ServiceUnavailableException(
+        message=f"assigned worker {worker.id} is unreachable",
+        details={"error_code": "worker_unreachable"},
+    ) from exc

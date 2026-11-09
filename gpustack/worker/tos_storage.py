@@ -1,8 +1,9 @@
 """Immutable TOS model releases: manifest.json plus content-addressed objects.
 
 Layout matches model-deploy (manifest + objects/<sha256>/<relative path>).
-Credentials are read only from TOS_ACCESS_KEY, TOS_SECRET_KEY and optional
-TOS_SECURITY_TOKEN. Secrets are never logged.
+Credentials come from the assigned TosConnection (inline keys) or, when
+credential_mode=env, from TOS_ACCESS_KEY / TOS_SECRET_KEY / TOS_SECURITY_TOKEN.
+Secrets are never logged.
 """
 
 from __future__ import annotations
@@ -34,6 +35,12 @@ _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _WINDOWS_RESERVED = re.compile(
     r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?\Z", re.I
 )
+_BLOCKED_ENDPOINT_HOSTS = {
+    "localhost",
+    "localhost.localdomain",
+    "metadata.google.internal",
+    "metadata.google.com",
+}
 
 ProgressCallback = Callable[[str, int], None]
 
@@ -62,6 +69,10 @@ class TosObjectClient(Protocol):
         content_type: str = "application/octet-stream",
         forbid_overwrite: bool = False,
     ) -> None: ...
+
+    def list_keys(self, bucket: str, prefix: str) -> List[str]: ...
+
+    def object_digest(self, bucket: str, key: str) -> tuple[str, int]: ...
 
 
 @dataclass(frozen=True)
@@ -113,6 +124,16 @@ def _require_id(name: str, value: Any) -> str:
     return value
 
 
+def _require_model_id(name: str, value: Any) -> str:
+    """Allow ``org/name`` style ids as a short path of ``_require_id`` segments."""
+    if not isinstance(value, str) or not value:
+        raise TosStorageError(f"{name} is required")
+    parts = value.split("/")
+    if len(parts) > 4:
+        raise TosStorageError(f"{name} has too many path segments")
+    return "/".join(_require_id(name, part) for part in parts)
+
+
 def _https_endpoint(endpoint: str) -> str:
     if not isinstance(endpoint, str) or not endpoint.strip():
         raise TosStorageError("tos_endpoint is required")
@@ -132,6 +153,23 @@ def _https_endpoint(endpoint: str) -> str:
         raise TosStorageError(
             "tos_endpoint must be an HTTPS host without credentials or path"
         )
+    host = parsed.hostname.lower()
+    if host in _BLOCKED_ENDPOINT_HOSTS:
+        raise TosStorageError("tos_endpoint host is not allowed")
+    try:
+        import ipaddress
+
+        ip = ipaddress.ip_address(host)
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+        ):
+            raise TosStorageError("tos_endpoint must not be a private or link-local IP")
+    except ValueError:
+        pass
     return value.rstrip("/")
 
 
@@ -146,7 +184,7 @@ def resolve_release_path(
     Explicit ``release_path`` wins. Otherwise join ``prefix`` (or ``TOS_PREFIX``)
     with ``model/version``.
     """
-    model = _require_id("tos_model", model)
+    model = _require_model_id("tos_model", model)
     version = _require_id("tos_version", version)
     if release_path is not None and str(release_path).strip():
         raw = str(release_path).strip()
@@ -272,13 +310,35 @@ def manifest_file_entries(manifest: Dict[str, Any]) -> List[FileEntry]:
 class SdkTosClient:
     """Thin wrapper around tos.TosClientV2. Import is deferred."""
 
-    def __init__(self, endpoint: str, region: str):
-        ak = os.environ.get("TOS_ACCESS_KEY")
-        sk = os.environ.get("TOS_SECRET_KEY")
+    def __init__(
+        self,
+        endpoint: str,
+        region: str,
+        access_key: Optional[str] = None,
+        secret_key: Optional[str] = None,
+        security_token: Optional[str] = None,
+        *,
+        use_env: bool = False,
+    ):
+        if use_env:
+            from gpustack.utils.tos_scope import env_endpoint_allows
+
+            if not env_endpoint_allows(endpoint):
+                raise TosStorageError(
+                    "env TOS credentials require TOS_ENDPOINT or "
+                    "TOS_ALLOWED_ENDPOINTS to match this endpoint"
+                )
+            ak = os.environ.get("TOS_ACCESS_KEY")
+            sk = os.environ.get("TOS_SECRET_KEY")
+            token = os.environ.get("TOS_SECURITY_TOKEN")
+        else:
+            ak = access_key
+            sk = secret_key
+            token = security_token
         if not ak or not sk:
             raise TosStorageError(
-                "set TOS_ACCESS_KEY and TOS_SECRET_KEY on the server (ingest) "
-                "and on workers that pull TOS models"
+                "TOS credentials are missing: inline connections must supply "
+                "keys; env mode must set TOS_ACCESS_KEY and TOS_SECRET_KEY"
             )
         try:
             import tos
@@ -294,7 +354,7 @@ class SdkTosClient:
                 sk,
                 endpoint,
                 region,
-                security_token=os.environ.get("TOS_SECURITY_TOKEN") or None,
+                security_token=token or None,
                 max_retry_count=3,
                 enable_crc=True,
                 enable_verify_ssl=True,
@@ -382,6 +442,55 @@ class SdkTosClient:
             suffix = f" (HTTP {status})" if isinstance(status, int) else ""
             raise TosStorageError(f"failed to write TOS object{suffix}") from None
 
+    def list_keys(self, bucket: str, prefix: str) -> List[str]:
+        keys: List[str] = []
+        continuation = ""
+        try:
+            while True:
+                kwargs = {"prefix": prefix or ""}
+                if continuation:
+                    kwargs["continuation_token"] = continuation
+                response = self._client.list_objects_type2(bucket, **kwargs)
+                contents = getattr(response, "contents", None) or []
+                for item in contents:
+                    key = getattr(item, "key", None)
+                    if key:
+                        keys.append(key)
+                truncated = bool(getattr(response, "is_truncated", False))
+                continuation = getattr(response, "next_continuation_token", "") or ""
+                if not truncated or not continuation:
+                    break
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            suffix = f" (HTTP {status})" if isinstance(status, int) else ""
+            raise TosStorageError(f"failed to list TOS objects{suffix}") from None
+        return keys
+
+    def object_digest(self, bucket: str, key: str) -> tuple[str, int]:
+        """Stream SHA256 of a remote object. Redirect following is SDK-defined
+        and has not been proven against a live TOS endpoint in this repo.
+        """
+        try:
+            response = self._client.get_object(bucket, key)
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            suffix = f" (HTTP {status})" if isinstance(status, int) else ""
+            raise TosStorageError(f"failed to read TOS object{suffix}") from None
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            while True:
+                chunk = response.read(4 * 1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                size += len(chunk)
+        finally:
+            closer = getattr(response, "close", None)
+            if closer:
+                closer()
+        return digest.hexdigest(), size
+
 
 def _parse_manifest(raw: bytes, location: TosLocation) -> Dict[str, Any]:
     try:
@@ -414,17 +523,73 @@ def manifest_total_size(manifest: Dict[str, Any]) -> int:
     return sum(int(entry["size"]) for entry in manifest.get("files") or [])
 
 
-def scan_local_release(local_dir: Path, location: TosLocation) -> Dict[str, Any]:
-    """Build a model-deploy manifest from a local directory or hub snapshot."""
-    root = Path(local_dir).absolute()
-    if root.is_symlink() or not root.is_dir():
-        raise TosStorageError("local model path must be an existing directory")
+_ORIGIN_MANIFEST_KEYS = (
+    "origin_source",
+    "origin_huggingface_repo_id",
+    "origin_huggingface_filename",
+    "origin_model_scope_model_id",
+    "origin_model_scope_file_path",
+    "origin_local_path",
+    "origin_worker_id",
+    "origin_model_file_id",
+    "upstream_revision",
+    "backend_hint",
+)
+
+
+def provenance_from_manifest(
+    manifest: Dict[str, Any], location: TosLocation
+) -> Dict[str, Any]:
+    """Trusted catalog identity for import. Client booleans are not used."""
+    from gpustack.utils.tos_scope import looks_gguf
+
+    files = [entry["path"] for entry in manifest.get("files") or []]
+    raw = manifest_bytes(manifest)
+    payload: Dict[str, Any] = {
+        "artifact_uri": location.uri,
+        "manifest_sha256": hashlib.sha256(raw).hexdigest(),
+        "manifest_bytes": len(raw),
+        "object_count": len(files),
+        "gguf": looks_gguf(files),
+        "selected_paths": files,
+    }
+    for key in _ORIGIN_MANIFEST_KEYS:
+        if manifest.get(key) is not None:
+            payload[key] = manifest[key]
+    return payload
+
+
+def _iter_local_files(root: Path, relatives: Optional[List[str]]) -> List[Path]:
+    if relatives:
+        selected = []
+        for rel in relatives:
+            path = _safe_path(root, rel)
+            if not path.is_file():
+                raise TosStorageError(f"archive path is not a file: {rel}")
+            selected.append(path)
+        return selected
     files = []
     for path in sorted(root.rglob("*")):
         if path.is_symlink():
             raise TosStorageError("local model directory must not contain symlinks")
         if not path.is_file():
             continue
+        files.append(path)
+    return files
+
+
+def scan_local_release(
+    local_dir: Path,
+    location: TosLocation,
+    relatives: Optional[List[str]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build a model-deploy manifest from a local directory or hub snapshot."""
+    root = Path(local_dir).absolute()
+    if root.is_symlink() or not root.is_dir():
+        raise TosStorageError("local model path must be an existing directory")
+    files = []
+    for path in _iter_local_files(root, relatives):
         relative = path.relative_to(root).as_posix()
         if relative.split("/")[0] in {MANIFEST_NAME, LOCAL_COMPLETE_NAME, _TEMP}:
             continue
@@ -438,25 +603,62 @@ def scan_local_release(local_dir: Path, location: TosLocation) -> Dict[str, Any]
                 "object_key": object_key_for(location.release_path, digest, relative),
             }
         )
-    return validate_manifest(
-        {
-            "schema_version": 1,
-            "model": location.model,
-            "version": location.version,
-            "files": files,
-        },
-        location,
-    )
+    payload: Dict[str, Any] = {
+        "schema_version": 1,
+        "model": location.model,
+        "version": location.version,
+        "files": files,
+    }
+    if extra:
+        payload.update(extra)
+    return validate_manifest(payload, location)
+
+
+def _assert_keys_in_release(location: TosLocation, manifest: Dict[str, Any]) -> None:
+    from gpustack.utils.tos_scope import object_key_in_prefix
+
+    prefix = location.release_path
+    if not object_key_in_prefix(prefix, location.manifest_key):
+        raise TosStorageError("manifest key is outside this release")
+    for entry in manifest["files"]:
+        key = entry.get("object_key") or ""
+        if not object_key_in_prefix(prefix, key):
+            raise TosStorageError("object key is outside this release prefix")
+
+
+def _remote_object_matches(
+    client: TosObjectClient, bucket: str, entry: Dict[str, Any]
+) -> bool:
+    """True only when the remote blob exists and its SHA256 and size match.
+
+    Existence alone is not enough: a content-addressed key can still hold
+    the wrong bytes.
+    """
+    if not client.object_exists(bucket, entry["object_key"]):
+        return False
+    digest_fn = getattr(client, "object_digest", None)
+    if digest_fn is None:
+        raise TosStorageError("TOS client cannot verify existing object checksums")
+    digest, size = digest_fn(bucket, entry["object_key"])
+    return digest == entry["sha256"] and size == entry["size"]
 
 
 def upload_release(
     location: TosLocation,
     local_dir: Path,
     client: TosObjectClient,
+    relatives: Optional[List[str]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+    progress: Optional[Callable[[int, int], None]] = None,
 ) -> Dict[str, Any]:
-    """Publish an immutable TOS release. Same version + different bytes is rejected."""
+    """Publish an immutable TOS release. Same version + different bytes is rejected.
+
+    Objects are uploaded first. The manifest is written last with
+    ``forbid_overwrite`` so a crash mid-upload leaves no catalog entry and a
+    retry can resume by skipping objects that already exist.
+    """
     root = Path(local_dir).absolute()
-    manifest = scan_local_release(root, location)
+    manifest = scan_local_release(root, location, relatives=relatives, extra=extra)
     raw = manifest_bytes(manifest)
     if len(raw) > _MAX_MANIFEST:
         raise TosStorageError("manifest exceeded the 16 MiB limit")
@@ -467,13 +669,20 @@ def upload_release(
                 "this model version is already published with different files; "
                 "use a new tos_version"
             )
+        if progress:
+            total = manifest_total_size(manifest)
+            progress(total, total)
         return previous
+    _assert_keys_in_release(location, manifest)
+    total = manifest_total_size(manifest)
+    done = 0
     for entry in manifest["files"]:
-        if client.object_exists(location.bucket, entry["object_key"]):
-            continue
-        client.upload_file(
-            location.bucket, entry["object_key"], _safe_path(root, entry["path"])
-        )
+        local = _safe_path(root, entry["path"])
+        if not _remote_object_matches(client, location.bucket, entry):
+            client.upload_file(location.bucket, entry["object_key"], local)
+        done += entry["size"]
+        if progress:
+            progress(done, total)
     try:
         client.put_bytes(
             location.bucket,
@@ -489,6 +698,41 @@ def upload_release(
                 "failed to publish manifest, or another writer took this version"
             ) from None
     return manifest
+
+
+def list_releases(
+    client: TosObjectClient, bucket: str, prefix: str
+) -> List[Dict[str, str]]:
+    """List immutable releases whose manifest sits under ``prefix``."""
+    from gpustack.utils.tos_scope import object_key_in_prefix
+
+    keys = client.list_keys(bucket, prefix or "")
+    found: List[Dict[str, str]] = []
+    seen = set()
+    marker = f"/{MANIFEST_NAME}"
+    for key in keys:
+        if not key.endswith(marker) and key != MANIFEST_NAME:
+            continue
+        if not object_key_in_prefix(prefix, key):
+            continue
+        rel = key[: -len(MANIFEST_NAME)].strip("/")
+        if prefix:
+            trimmed = prefix.strip("/")
+            if rel == trimmed:
+                continue
+            if rel.startswith(trimmed + "/"):
+                rel = rel[len(trimmed) + 1 :]
+        parts = rel.split("/")
+        if len(parts) < 2:
+            continue
+        version = parts[-1]
+        model = "/".join(parts[:-1])
+        identity = (model, version)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        found.append({"tos_model": model, "tos_version": version})
+    return found
 
 
 def _file_matches(path: Path, entry: Dict[str, Any]) -> bool:

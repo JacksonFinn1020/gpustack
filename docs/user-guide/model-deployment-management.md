@@ -67,9 +67,16 @@ To deploy a local path model:
 
 ### Deploying a TOS Model
 
-Preferred path: **ingest weights into TOS**, then pick a worker and GPUs in GPUStack. The **assigned worker** downloads and SHA256-verifies the immutable release (`manifest.json` plus content-addressed `objects/<sha256>/…`) and GPUStack starts the backend from that local path. Do not treat a download that only reaches the control/server machine as the primary path.
+Preferred path: keep an **immutable TOS release**, then pick a worker and GPUs. The **assigned worker** downloads and SHA256-verifies `manifest.json` plus content-addressed `objects/<sha256>/…` and GPUStack starts the backend from that local path. Do not treat a download that only reaches the control/server machine as the primary path.
 
-Set the same credential names on the **server** (ingest) and on **workers** that pull (never store these on the model row or in git):
+Two directions:
+
+1. **Archive (A):** an Org owner archives a READY worker cache (full directory or selected files) to TOS via `POST /v2/tos/archives`. Optional `auto_archive` on Hugging Face / ModelScope downloads is off by default and uses a separate `archive_state`; archive failure does not mark the READY file failed.
+2. **Import (B):** create a model or model file with `source: tos` (legacy coordinate fields or `tos_connection_id`) so the assigned worker pulls that version even if Hub is unreachable.
+
+See [TOS API contract](tos-api-contract.md) for fields, states, and errors. Stored connections (`POST /v2/tos/connections`) hold endpoint/region/bucket/prefix and write-only keys; reads are redacted. Catalog listing cannot escape the connection prefix.
+
+Credentials may come from the connection (inline AK/SK) or, with `credential_mode=env`, from the same worker environment variables as before:
 
 ```bash
 export TOS_ACCESS_KEY=...

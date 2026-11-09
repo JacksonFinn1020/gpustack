@@ -3,6 +3,18 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
+class ArchiveListingFile(BaseModel):
+    path: str
+    size: int
+
+
+class ArchiveListingResponse(BaseModel):
+    items: List[ArchiveListingFile] = Field(default_factory=list)
+    truncated: bool = False
+    next_after: Optional[str] = None
+    root_kind: str = "directory"
+
+
 class FileExistsResponse(BaseModel):
     """Response indicating whether a path exists."""
 

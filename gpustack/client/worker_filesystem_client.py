@@ -1,9 +1,9 @@
 import json
 import logging
-from typing import Dict
+from typing import Dict, Optional
 
 import aiohttp
-from gpustack.schemas.filesystem import FileExistsResponse
+from gpustack.schemas.filesystem import ArchiveListingResponse, FileExistsResponse
 from gpustack.schemas.models import Model
 from gpustack.schemas.workers import Worker
 from gpustack.server.worker_request import request_to_worker
@@ -94,6 +94,30 @@ class WorkerFilesystemClient:
             timeout=aiohttp.ClientTimeout(total=_TIMEOUT, sock_connect=5),
         )
         return FileExistsResponse.model_validate_json(body)
+
+    async def list_archive_files(
+        self,
+        worker: Worker,
+        model_file_id: int,
+        *,
+        after: Optional[str] = None,
+        limit: int = 100,
+    ) -> ArchiveListingResponse:
+        params = {"model_file_id": model_file_id, "limit": limit}
+        if after:
+            params["after"] = after
+        _, body = await request_to_worker(
+            worker=worker,
+            method="GET",
+            path="files/archive-listing",
+            proxy_client=self._http_client,
+            no_proxy_client=self._http_client_no_proxy,
+            params=params,
+            timeout=aiohttp.ClientTimeout(total=_TIMEOUT, sock_connect=5),
+        )
+        if body is None:
+            raise aiohttp.ClientError("worker returned an empty archive listing")
+        return ArchiveListingResponse.model_validate_json(body)
 
     async def get_model_weight_size(
         self,

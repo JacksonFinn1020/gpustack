@@ -93,6 +93,14 @@ class FakeTos:
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(self.get_object_bytes(bucket, key))
 
+    def list_keys(self, bucket: str, prefix: str):
+        marker = prefix or ""
+        return [key for key in self.objects if key.startswith(marker)]
+
+    def object_digest(self, bucket: str, key: str):
+        data = self.get_object_bytes(bucket, key)
+        return _sha(data), len(data)
+
 
 def _tos_source(**overrides) -> ModelSource:
     fields = dict(
@@ -176,8 +184,15 @@ def test_tos_source_validation():
     source = _tos_source()
     assert source.readable_source == "tos://models/lingji-models/qwen3/v1"
     assert source.model_source_index
-    with pytest.raises(ValueError, match="tos_endpoint"):
+    with pytest.raises(ValueError, match="tos_model"):
         ModelSource(source=SourceEnum.TOS, tos_bucket="models")
+    connected = ModelSource(
+        source=SourceEnum.TOS,
+        tos_connection_id=1,
+        tos_model="qwen3",
+        tos_version="v1",
+    )
+    assert connected.tos_connection_id == 1
 
 
 def test_other_sources_still_require_their_fields():
@@ -199,21 +214,17 @@ def test_download_model_tos_uses_worker_client(tmp_path, monkeypatch):
         files[0]["object_key"]: content,
     }
     client = FakeTos(objects)
-    monkeypatch.setattr(
-        tos_storage,
-        "SdkTosClient",
-        lambda endpoint, region: client,
-    )
     dest = tmp_path / "cache"
     paths = downloaders.download_model(
         _tos_source(),
         local_dir=str(dest),
         cache_dir=str(tmp_path / "unused"),
+        tos_client=client,
     )
     assert paths == [str(dest)]
     assert (dest / "config.json").read_bytes() == content
 
-    info = downloaders.get_model_file_info(_tos_source())
+    info = downloaders.TosDownloader.get_model_file_info(_tos_source(), client=client)
     assert [entry.rfilename for entry in info] == ["config.json"]
     assert info[0].size == len(content)
 
@@ -322,6 +333,10 @@ def test_tos_pretrained_config_reads_local_cache(tmp_path, config):
 
 @pytest.mark.asyncio
 async def test_tos_vram_uses_manifest_size(monkeypatch):
+    async def _fake_client(model):
+        return object()
+
+    monkeypatch.setattr(policy_utils, "_tos_control_plane_client", _fake_client)
     monkeypatch.setattr(
         downloaders.TosDownloader,
         "get_model_file_info",
@@ -357,3 +372,82 @@ def test_upload_is_idempotent_for_same_bytes(tmp_path):
     first = tos_storage.upload_release(location, src, client)
     again = tos_storage.upload_release(location, src, client)
     assert first == again
+
+
+def test_upload_single_file_subset(tmp_path):
+    location = _location(model="meta-llama-3", version="gguf-q4")
+    src = tmp_path / "snap"
+    src.mkdir()
+    (src / "model.gguf").write_bytes(b"gguf")
+    (src / "config.json").write_bytes(b"{}")
+    client = FakeTos({})
+    published = tos_storage.upload_release(
+        location, src, client, relatives=["model.gguf"]
+    )
+    assert [entry["path"] for entry in published["files"]] == ["model.gguf"]
+    assert location.manifest_key in client.objects
+
+
+def test_upload_resumes_after_objects_without_manifest(tmp_path):
+    location = _location()
+    src = tmp_path / "snap"
+    src.mkdir()
+    (src / "weights.bin").write_bytes(b"payload")
+    client = FakeTos({})
+    scanned = tos_storage.scan_local_release(src, location)
+    client.objects[scanned["files"][0]["object_key"]] = b"payload"
+    published = tos_storage.upload_release(location, src, client)
+    assert location.manifest_key in client.objects
+    assert published["files"][0]["sha256"] == scanned["files"][0]["sha256"]
+
+
+def test_list_releases_stays_inside_prefix():
+    location = _location()
+    objects = {
+        location.manifest_key: b"{}",
+        "other-prefix/qwen3/v1/manifest.json": b"{}",
+        "lingji-models/qwen3/v2/manifest.json": b"{}",
+    }
+    listed = tos_storage.list_releases(FakeTos(objects), "models", "lingji-models")
+    versions = {(item["tos_model"], item["tos_version"]) for item in listed}
+    assert ("qwen3", "v1") in versions
+    assert ("qwen3", "v2") in versions
+    assert all(item["tos_model"] != "other-prefix/qwen3" for item in listed)
+
+
+def test_model_id_allows_org_slash_name():
+    path = tos_storage.resolve_release_path(
+        "meta/llama-3-8b", "v1", prefix="org-a/models"
+    )
+    assert path == "org-a/models/meta/llama-3-8b/v1"
+
+
+def test_upload_rejects_corrupt_content_addressed_object(tmp_path):
+    location = _location()
+    src = tmp_path / "snap"
+    src.mkdir()
+    (src / "weights.bin").write_bytes(b"payload")
+    scanned = tos_storage.scan_local_release(src, location)
+    client = FakeTos({scanned["files"][0]["object_key"]: b"tampered-bytes"})
+    tos_storage.upload_release(location, src, client)
+    assert client.objects[scanned["files"][0]["object_key"]] == b"payload"
+
+
+def test_https_endpoint_rejects_private_and_localhost():
+    with pytest.raises(tos_storage.TosStorageError, match="private"):
+        tos_storage._https_endpoint("https://10.1.2.3")
+    with pytest.raises(tos_storage.TosStorageError, match="not allowed"):
+        tos_storage._https_endpoint("https://localhost")
+    with pytest.raises(tos_storage.TosStorageError, match="not allowed"):
+        tos_storage._https_endpoint("https://metadata.google.internal")
+
+
+def test_upload_rejects_path_escape(tmp_path):
+    location = _location()
+    src = tmp_path / "snap"
+    src.mkdir()
+    (src / "weights.bin").write_bytes(b"x")
+    with pytest.raises(tos_storage.TosStorageError):
+        tos_storage.upload_release(
+            location, src, FakeTos({}), relatives=["../secret.bin"]
+        )

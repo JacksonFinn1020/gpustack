@@ -338,6 +338,12 @@ class Worker:
             worker_id=self._worker_id, clientset=self._clientset, cfg=self._config
         )
         self._create_async_task(model_file_manager.watch_model_files())
+        from gpustack.worker.tos_archive_manager import TosArchiveManager
+
+        archive_manager = TosArchiveManager(
+            worker_id=self._worker_id, clientset=self._clientset, cfg=self._config
+        )
+        self._create_async_task(archive_manager.watch_archive_jobs())
 
         if self._config.proxy_mode == ModelInstanceProxyModeEnum.TUNNEL:
             docker_sock = Path("/var/run/docker.sock")

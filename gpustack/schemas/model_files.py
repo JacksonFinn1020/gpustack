@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import ClassVar, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 from sqlmodel import (
     JSON,
     BigInteger,
@@ -14,7 +14,7 @@ from sqlmodel import (
 )
 
 from gpustack.mixins import BaseModelMixin
-from gpustack.schemas.common import ListParams, PaginatedList
+from gpustack.schemas.common import ListParams, PaginatedList, Pagination
 from gpustack.schemas.links import (
     ModelInstanceDraftModelFileLink,
     ModelInstanceModelFileLink,
@@ -42,6 +42,17 @@ class ModelFileBase(SQLModel, ModelSource):
     state: ModelFileStateEnum = ModelFileStateEnum.DOWNLOADING
     state_message: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
+    )
+    auto_archive: Optional[Dict[str, Any]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    archive_state: Optional[str] = Field(default=None, nullable=True)
+    archive_error_code: Optional[str] = Field(default=None, nullable=True)
+    archive_error_message: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+    provenance: Optional[Dict[str, Any]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
     )
 
 
@@ -107,3 +118,18 @@ class ModelFilePublic(
 
 
 ModelFilesPublic = PaginatedList[ModelFilePublic]
+
+
+class ModelFileEntryPublic(SQLModel):
+    """One file under a READY cache. ``path`` is an ``archives.paths`` value."""
+
+    path: str
+    size: int
+
+
+class ModelFileEntriesPublic(SQLModel):
+    items: List[ModelFileEntryPublic] = []
+    pagination: Pagination
+    truncated: bool = False
+    next_after: Optional[str] = None
+    root_kind: str = "directory"

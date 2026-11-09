@@ -391,6 +391,7 @@ class ModelSource(BaseModel):
     tos_model: Optional[str] = None
     tos_version: Optional[str] = None
     tos_release_path: Optional[str] = None
+    tos_connection_id: Optional[int] = None
 
     def source_create_fields(self) -> Dict[str, Any]:
         """Identity fields copied onto ModelInstance / ModelFile rows."""
@@ -407,6 +408,7 @@ class ModelSource(BaseModel):
             "tos_model": self.tos_model,
             "tos_version": self.tos_version,
             "tos_release_path": self.tos_release_path,
+            "tos_connection_id": self.tos_connection_id,
         }
 
     def _tos_identity(self) -> List[str]:
@@ -490,21 +492,27 @@ class ModelSource(BaseModel):
                     "local_path must be provided when source is 'local_path'"
                 )
         if self.source == SourceEnum.TOS:
+            if not (self.tos_model and str(self.tos_model).strip()) or not (
+                self.tos_version and str(self.tos_version).strip()
+            ):
+                raise ValueError(
+                    "tos_model and tos_version must be provided when source is 'tos'"
+                )
+            if self.tos_connection_id:
+                return self
             missing = [
                 name
                 for name, value in (
                     ("tos_endpoint", self.tos_endpoint),
                     ("tos_region", self.tos_region),
                     ("tos_bucket", self.tos_bucket),
-                    ("tos_model", self.tos_model),
-                    ("tos_version", self.tos_version),
                 )
                 if not (value and str(value).strip())
             ]
             if missing:
                 raise ValueError(
-                    "tos_endpoint, tos_region, tos_bucket, tos_model and "
-                    "tos_version must be provided when source is 'tos'"
+                    "tos_connection_id, or tos_endpoint, tos_region and "
+                    "tos_bucket, must be provided when source is 'tos'"
                 )
         return self
 
@@ -1263,6 +1271,12 @@ class ModelBase(ModelSpecBase):
     )
     # Deprecated field, kept for backward compatibility
     access_policy: AccessPolicyEnum = Field(default=AccessPolicyEnum.AUTHED)
+    auto_archive: Optional[Dict[str, Any]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    provenance: Optional[Dict[str, Any]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
 
 class Model(ModelBase, BaseModelMixin, table=True):
@@ -2212,7 +2226,7 @@ def is_gguf_model(model: Union[Model, ModelSource]):
     Args:
         model: Model to check.
     """
-    return (
+    if (
         (
             model.source == SourceEnum.HUGGING_FACE
             and model.huggingface_filename
@@ -2228,7 +2242,25 @@ def is_gguf_model(model: Union[Model, ModelSource]):
             and model.local_path
             and model.local_path.endswith(".gguf")
         )
-    )
+    ):
+        return True
+    if model.source == SourceEnum.TOS:
+        from gpustack.utils.tos_scope import looks_gguf
+
+        provenance = getattr(model, "provenance", None) or {}
+        if provenance.get("gguf"):
+            return True
+        selected = provenance.get("selected_paths") or []
+        if looks_gguf([str(path) for path in selected]):
+            return True
+        for value in (
+            getattr(model, "tos_release_path", None),
+            getattr(model, "tos_model", None),
+            getattr(model, "tos_version", None),
+        ):
+            if value and str(value).lower().endswith(".gguf"):
+                return True
+    return False
 
 
 def is_audio_model(model: Model):
