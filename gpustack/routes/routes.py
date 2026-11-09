@@ -47,6 +47,7 @@ from gpustack.routes import (
     cluster_topology,
     token,
     tos,
+    tos_archives,
     benchmarks,
     benchmark_profiles,
     model_provider,
@@ -121,6 +122,11 @@ SYSTEM_ROUTES = frozenset(
         ("GET", inference_backend.list_backend_configs),
         ("GET", metrics.get_metrics_config),
         ("GET", metrics.get_default_metrics_config),
+        ("GET", tos_archives.list_archives),
+        ("GET", tos_archives.get_archive),
+        ("PUT", tos_archives.update_archive),
+        ("POST", tos_archives.complete_archive),
+        ("GET", tos_archives.get_archive_transport),
     }
 )
 # Cluster credentials serve bootstrap and controller Kubernetes operations.

@@ -13,9 +13,12 @@ from pydantic import BaseModel, Field
 from gpustack.api.exceptions import InvalidException
 from gpustack.schemas.models import ModelSource, SourceEnum
 from gpustack.worker import tos_storage
+from gpustack.routes import tos_archives, tos_connections
 
 router = APIRouter()
 ui_router = APIRouter()
+router.include_router(tos_connections.router)
+router.include_router(tos_archives.router)
 
 TOS_SOURCE_FIELDS = [
     {

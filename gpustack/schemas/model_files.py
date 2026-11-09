@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import ClassVar, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 from sqlmodel import (
     JSON,
     BigInteger,
@@ -42,6 +42,17 @@ class ModelFileBase(SQLModel, ModelSource):
     state: ModelFileStateEnum = ModelFileStateEnum.DOWNLOADING
     state_message: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
+    )
+    auto_archive: Optional[Dict[str, Any]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    archive_state: Optional[str] = Field(default=None, nullable=True)
+    archive_error_code: Optional[str] = Field(default=None, nullable=True)
+    archive_error_message: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+    provenance: Optional[Dict[str, Any]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
     )
 
 

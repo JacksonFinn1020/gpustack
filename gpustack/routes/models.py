@@ -84,6 +84,7 @@ from gpustack.schemas.models import (
     ModelPublic,
     ModelsPublic,
     ScalingSchedule,
+    SourceEnum,
 )
 from gpustack.schemas.model_routes import (
     AccessPolicyEnum,
@@ -1486,6 +1487,16 @@ async def _check_model_create(
     await assert_cluster_belongs_to_org(
         ctx, session, model_in.cluster_id, target_org_id, cluster=cluster
     )
+    from gpustack.server.tos_bindings import (
+        auto_archive_enabled,
+        bind_tos_connection,
+    )
+
+    await bind_tos_connection(session, ctx, model_in)
+    if auto_archive_enabled(model_in) and model_in.source == SourceEnum.TOS:
+        raise BadRequestException(
+            message="auto_archive is for Hugging Face / ModelScope downloads, not TOS source"
+        )
     await _assert_model_name_available(session, model_in, target_org_id)
     await _validate_model_spec(session, model_in, target_org_id)
 

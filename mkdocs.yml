@@ -191,6 +191,8 @@ nav:
               - Decision: user-guide/playground/decision.md
           - Model Catalog: user-guide/model-catalog.md
           - Model Deployment Management: user-guide/model-deployment-management.md
+          - TOS API contract: user-guide/tos-api-contract.md
+          - TOS field acceptance: user-guide/tos-field-acceptance.md
           - PD Disaggregation: user-guide/pd-disaggregation.md
           - Model Route Management: user-guide/model-route-management.md
           - Model Provider Management: user-guide/model-provider-management.md
