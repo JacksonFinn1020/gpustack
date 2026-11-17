@@ -110,6 +110,8 @@ def test_revision_fields_explicitly_classify_model_update_fields():
         "ready_replicas",
         "meta",
         "distributable",
+        # TOS manifest/directory stamp; worker and bind paths rewrite it.
+        "provenance",
     }
     assert len(recorded) == len(REVISION_FIELDS), "Duplicate revision fields"
     assert not recorded - fields, f"Unknown revision fields: {recorded - fields}"

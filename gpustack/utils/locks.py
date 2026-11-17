@@ -156,6 +156,14 @@ def get_lock_path(cache_dir: str, model_file: ModelFile):
         model_id = model_file.huggingface_repo_id
     elif model_file.source == SourceEnum.MODEL_SCOPE:
         model_id = model_file.model_scope_model_id
+    elif model_file.source == SourceEnum.TOS:
+        ident = model_file.tos_release_path or "/".join(
+            p for p in (model_file.tos_model, model_file.tos_version) if p
+        )
+        safe = (ident or "release").replace("/", "_")
+        return os.path.join(
+            cache_dir, "tos", model_file.tos_bucket or "bucket", f"{safe}.lock"
+        )
     group_or_owner, name = model_id_to_group_owner_name(model_id)
     return os.path.join(
         os.path.join(cache_dir, model_file.source),

@@ -37,6 +37,7 @@ dependencies = [
     "cryptography>=50.0.0",
     "tzdata>=2024.1",
     "modelscope>=1.28",
+    "tos>=2.9.3",
     "uvicorn>=0.32.0",
     "transformers>=5.19.0,<6.0.0",
     "fastapi-cdn-host>=0.8.0",

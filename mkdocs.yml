@@ -191,6 +191,8 @@ nav:
               - Decision: user-guide/playground/decision.md
           - Model Catalog: user-guide/model-catalog.md
           - Model Deployment Management: user-guide/model-deployment-management.md
+          - TOS API contract: user-guide/tos-api-contract.md
+          - TOS field acceptance: user-guide/tos-field-acceptance.md
           - PD Disaggregation: user-guide/pd-disaggregation.md
           - Model Route Management: user-guide/model-route-management.md
           - Model Provider Management: user-guide/model-provider-management.md
@@ -247,6 +249,7 @@ nav:
           - Integrate with MaxKB: integrations/integrate-with-maxkb.md
           - Integrate with NewAPI: integrations/integrate-with-newapi.md
           - Integrate with LiteLLM: integrations/integrate-with-litellm.md
+          - Integrate with model-deploy: integrations/integrate-with-model-deploy.md
       - Architecture: architecture.md
       - Scheduler: scheduler.md
       - Troubleshooting: troubleshooting.md

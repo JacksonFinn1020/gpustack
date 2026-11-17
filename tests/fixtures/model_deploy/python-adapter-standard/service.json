@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "name": "laya-standard",
+  "runtime": "python-adapter",
+  "host": "0.0.0.0",
+  "port": 9740,
+  "model_path": "/data/model",
+  "device": "cuda:0",
+  "served_model_name": "laya-standard",
+  "tensor_parallel_size": 1,
+  "extra_args": [],
+  "custom": {
+    "command": [],
+    "environment": {}
+  },
+  "health": {
+    "path": "/health/ready",
+    "expect_json": {
+      "status": "ok",
+      "model_loaded": true
+    },
+    "require_nonempty_data": false
+  }
+}

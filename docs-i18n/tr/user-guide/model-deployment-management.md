@@ -69,6 +69,10 @@ Yerel yol modelini dağıtmak için:
 
 8. `Save` düğmesine tıklayın.
 
+### TOS modelini dağıtma { #deploying-a-tos-model }
+
+TOS tercih edilen yoldur: server’da `gpustack tos-ingest` veya `POST /v2/tos/releases` (`/tos-deploy`, Source=TOS) `manifest.json` + `objects/<sha256>/…` yayınlar; worker ve GPU seçilir. Atanan **worker** indirir, SHA256 doğrular ve yerel yoldan başlatır. Kimlik bilgileri server/worker’daki `TOS_ACCESS_KEY` / `TOS_SECRET_KEY`. `pip install tos` gerekir (wheel zorunlu bağımlılığı değildir). Oluşturma: `POST /v2/models`, `source: tos`. HF / ModelScope / `local_path` aynı kalır.
+
 ### Arka uç { #backend }
 
 Şu anda GPUStack bazı yerleşik arka uçları desteklemektedir: vLLM, SGLang, MindIE ve VoxBox.

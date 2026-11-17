@@ -84,6 +84,7 @@ from gpustack.schemas.models import (
     ModelPublic,
     ModelsPublic,
     ScalingSchedule,
+    SourceEnum,
 )
 from gpustack.schemas.model_routes import (
     AccessPolicyEnum,
@@ -520,6 +521,27 @@ def _is_schedule_pause_only_update(
     return all(getattr(model_in, field) == getattr(stored, field) for field in fields)
 
 
+def _reject_tos_gguf_on_transformer_backend(model_in) -> None:
+    """GGUF TOS artifacts cannot start on vLLM/SGLang/MindIE/VoxBox."""
+    from gpustack.schemas.models import get_backend, is_gguf_model
+
+    if getattr(model_in, "source", None) != SourceEnum.TOS:
+        return
+    if not is_gguf_model(model_in):
+        return
+    backend = get_backend(model_in)
+    if backend in (
+        BackendEnum.VLLM,
+        BackendEnum.SGLANG,
+        BackendEnum.ASCEND_MINDIE,
+        BackendEnum.VOX_BOX,
+    ):
+        raise BadRequestException(
+            message="TOS GGUF artifacts cannot use this inference backend; "
+            "use a GGUF-capable custom/llama-box backend"
+        )
+
+
 async def validate_model_in(
     session: SessionDep,
     model_in: Union[ModelCreate, ModelUpdate, ModelSpecBase],
@@ -531,6 +553,17 @@ async def validate_model_in(
     # merged state rather than against the handful of fields it happened to
     # send. Absent on create, where there is nothing to merge.
     await validate_pd_config(session, model_in, cluster_id=cluster_id, stored=stored)
+    from gpustack.server.tos_bindings import stamp_tos_provenance_from_manifest
+
+    pause_preview = _is_schedule_pause_only_update(model_in, stored)
+    if not pause_preview and getattr(model_in, "source", None) == SourceEnum.TOS:
+        owner = getattr(model_in, "owner_principal_id", None)
+        if owner is None and stored is not None:
+            owner = stored.owner_principal_id
+        await stamp_tos_provenance_from_manifest(
+            session, model_in, owner_principal_id=owner
+        )
+    _reject_tos_gguf_on_transformer_backend(model_in)
 
     # API responses use short LoRA names; compare their stored form when
     # deciding whether a request only pauses an unchanged deployment.
@@ -1486,6 +1519,21 @@ async def _check_model_create(
     await assert_cluster_belongs_to_org(
         ctx, session, model_in.cluster_id, target_org_id, cluster=cluster
     )
+    from gpustack.server.tos_bindings import (
+        auto_archive_enabled,
+        bind_auto_archive_connection,
+        bind_tos_connection,
+    )
+
+    model_in.owner_principal_id = target_org_id
+    await bind_tos_connection(session, ctx, model_in, expected_owner=target_org_id)
+    await bind_auto_archive_connection(
+        session, ctx, model_in, expected_owner=target_org_id
+    )
+    if auto_archive_enabled(model_in) and model_in.source == SourceEnum.TOS:
+        raise BadRequestException(
+            message="auto_archive is for Hugging Face / ModelScope downloads, not TOS source"
+        )
     await _assert_model_name_available(session, model_in, target_org_id)
     await _validate_model_spec(session, model_in, target_org_id)
 

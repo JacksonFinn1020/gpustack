@@ -4,7 +4,7 @@ GPUStack allows admins to download and manage model files.
 
 ## Add Model File
 
-GPUStack currently supports models from [Hugging Face](https://huggingface.co), [ModelScope](https://modelscope.cn), and local paths. To add model files, navigate to the `Model Files` page.
+GPUStack currently supports models from [Hugging Face](https://huggingface.co), [ModelScope](https://modelscope.cn), local paths, and Volcengine TOS. To add model files, navigate to the `Model Files` page. The TOS source can also be created by deploying a model with `source: tos`; the assigned worker then pulls `manifest.json` and verifies each object.
 
 ### Add a Hugging Face Model
 
@@ -32,6 +32,10 @@ You can add models from a local path. The path can be a directory (e.g., a Huggi
 2. Enter the `Model Path`.
 3. Select the target worker.
 4. Click the `Save` button.
+
+### Add a TOS Model
+
+Ingest from a **server-local** directory with `gpustack tos-ingest` or `POST /v2/tos/releases`, or archive a **worker READY** cache with `POST /v2/tos/archives` (see [TOS API contract](tos-api-contract.md)). Then create a model file (or a deployment) with `source: tos`, either `tos_connection_id` or the legacy TOS coordinate fields, and the target worker. GPUStack downloads the immutable release onto that worker. Credentials come from the TosConnection (worker `GET .../transport`) or from `TOS_ACCESS_KEY` / `TOS_SECRET_KEY` when `credential_mode=env`. Workers need `pip install tos`. Deleting the local ModelFile does not delete the remote release.
 
 ## Retry Download
 

@@ -69,6 +69,10 @@ translation_status: translated
 
 8. Нажмите кнопку `Save`.
 
+### Развёртывание модели TOS { #deploying-a-tos-model }
+
+TOS — предпочтительный путь: ingest на server (`gpustack tos-ingest` или `POST /v2/tos/releases`, форма `/tos-deploy` с Source=TOS) пишет `manifest.json` + `objects/<sha256>/…`, затем выбирают worker и GPU. Назначенный **worker** скачивает, проверяет SHA256 и стартует с локального пути. Учётные данные — `TOS_ACCESS_KEY` / `TOS_SECRET_KEY` на server и worker. Нужен `pip install tos` (не жёсткая зависимость колеса). Создание: `POST /v2/models`, `source: tos`. HF / ModelScope / `local_path` без изменений.
+
 ### Бэкэнд { #backend }
 
 В настоящее время GPUStack поддерживает некоторые встроенные серверные части: vLLM, SGLang, MindIE и VoxBox.

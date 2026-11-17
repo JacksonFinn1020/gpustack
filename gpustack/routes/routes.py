@@ -46,6 +46,8 @@ from gpustack.routes import (
     clusters,
     cluster_topology,
     token,
+    tos,
+    tos_archives,
     benchmarks,
     benchmark_profiles,
     model_provider,
@@ -120,6 +122,12 @@ SYSTEM_ROUTES = frozenset(
         ("GET", inference_backend.list_backend_configs),
         ("GET", metrics.get_metrics_config),
         ("GET", metrics.get_default_metrics_config),
+        ("GET", tos_archives.list_archives),
+        ("GET", tos_archives.get_archive),
+        ("PUT", tos_archives.update_archive),
+        ("POST", tos_archives.complete_archive),
+        ("GET", tos_archives.get_archive_transport),
+        ("GET", tos_archives.get_pull_transport),
     }
 )
 # Cluster credentials serve bootstrap and controller Kubernetes operations.
@@ -257,6 +265,12 @@ model_routers = [
         "router": model_files.router,
         "prefix": "/model-files",
         "tags": ["Model Files"],
+        "dependencies": _org_owner_only,
+    },
+    {
+        "router": tos.router,
+        "prefix": "/tos",
+        "tags": ["TOS"],
         "dependencies": _org_owner_only,
     },
     {
@@ -596,6 +610,7 @@ api_router.include_router(
     cacerts.router, prefix=versioned_prefix, tags=["TLS"], include_in_schema=False
 )
 api_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
+api_router.include_router(tos.ui_router)
 api_router.include_router(
     router=token.router,
     prefix="/token-auth",

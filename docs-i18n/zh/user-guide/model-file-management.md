@@ -8,7 +8,7 @@ GPUStack 允许管理员下载和管理模型文件。
 
 ## 添加模型文件 { #add-model-file }
 
-GPUStack 目前支持来自 [Hugging Face](https://huggingface.co)、[ModelScope](https://modelscope.cn) 和本地路径的模型。要添加模型文件，请进入 `Model Files` 页面。
+GPUStack 目前支持来自 [Hugging Face](https://huggingface.co)、[ModelScope](https://modelscope.cn)、本地路径以及火山引擎 TOS 的模型。要添加模型文件，请进入 `Model Files` 页面。TOS 源也可以通过以 `source: tos` 部署模型来创建；被选中的 worker 会拉取 `manifest.json` 并校验每个对象。
 
 ### 添加 Hugging Face 模型 { #add-a-hugging-face-model }
 
@@ -36,6 +36,10 @@ GPUStack 目前支持来自 [Hugging Face](https://huggingface.co)、[ModelScope
 2. 输入 `Model Path`。
 3. 选择目标 Worker。
 4. 单击 `Save` 按钮。
+
+### 添加 TOS 模型 { #add-a-tos-model }
+
+先入库（`gpustack tos-ingest` 或 `POST /v2/tos/releases`），再以 `source: tos` 以及[模型部署管理](model-deployment-management.md#deploying-a-tos-model)中的 TOS 坐标创建模型文件（或由部署自动创建），并选择目标 Worker。GPUStack 会把不可变发布下载到该 Worker；凭据来自 worker 上的 `TOS_ACCESS_KEY` / `TOS_SECRET_KEY`，而不是 API 请求体。Worker 需 `pip install tos`。
 
 ## 重试下载 { #retry-download }
 

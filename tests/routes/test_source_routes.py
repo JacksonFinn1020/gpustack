@@ -209,8 +209,11 @@ def test_the_ota_endpoints_are_one_admin_only_family_outside_any_id_namespace():
 
     # Nothing source-shaped is left under a consumer, where the retired
     # ``/source`` / ``/runner-source`` mounts sat beside ``/{id}``.
+    # ``GET /v2/tos/sources`` is the TOS source-enum listing, not an OTA
+    # consumer mount.
     assert not any(
         route.path.endswith(("/source", "/runner-source", "/sources"))
+        and not route.path.startswith("/v2/tos/")
         for route in api_router.routes
     )
 

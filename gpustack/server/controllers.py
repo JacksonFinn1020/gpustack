@@ -1789,12 +1789,7 @@ async def _sync_replicas_legacy(session: AsyncSession, model: Model):
                 name=f"{model.name}-{name_prefix}",
                 model_id=model.id,
                 model_name=model.name,
-                source=model.source,
-                huggingface_repo_id=model.huggingface_repo_id,
-                huggingface_filename=model.huggingface_filename,
-                model_scope_model_id=model.model_scope_model_id,
-                model_scope_file_path=model.model_scope_file_path,
-                local_path=model.local_path,
+                **model.source_create_fields(),
                 state=ModelInstanceStateEnum.PENDING,
                 cluster_id=model.cluster_id,
                 # Inherit the parent Model's tenant binding — the schema
@@ -2210,12 +2205,7 @@ async def _build_instance_create(
         name=f"{model.name}-{role.name}-{name_prefix}",
         model_id=model.id,
         model_name=model.name,
-        source=model.source,
-        huggingface_repo_id=model.huggingface_repo_id,
-        huggingface_filename=model.huggingface_filename,
-        model_scope_model_id=model.model_scope_model_id,
-        model_scope_file_path=model.model_scope_file_path,
-        local_path=model.local_path,
+        **model.source_create_fields(),
         state=ModelInstanceStateEnum.PENDING,
         cluster_id=model.cluster_id,
         owner_principal_id=model.owner_principal_id,
@@ -2868,12 +2858,7 @@ async def get_or_create_lora_model_files_for_instance(
                     worker_id, (None, None)
                 )
                 nf = ModelFile(
-                    source=lora_src.source,
-                    huggingface_repo_id=lora_src.huggingface_repo_id,
-                    huggingface_filename=lora_src.huggingface_filename,
-                    model_scope_model_id=lora_src.model_scope_model_id,
-                    model_scope_file_path=lora_src.model_scope_file_path,
-                    local_path=lora_src.local_path,
+                    **lora_src.source_create_fields(),
                     is_lora=True,
                     base_model=base_desc,
                     state=ModelFileStateEnum.DOWNLOADING,
@@ -2993,13 +2978,15 @@ async def get_or_create_model_files_for_instance(
     # Create model files for the missing worker IDs.
     for worker_id in missing_worker_ids:
         cluster_id, owner_principal_id = worker_scopes.get(worker_id, (None, None))
+        extra = {}
+        if not is_draft_model:
+            model_row = await Model.one_by_id(session, instance.model_id)
+            if model_row:
+                extra["auto_archive"] = model_row.auto_archive
+                extra["provenance"] = model_row.provenance
         model_file = ModelFile(
-            source=model_source.source,
-            huggingface_repo_id=model_source.huggingface_repo_id,
-            huggingface_filename=model_source.huggingface_filename,
-            model_scope_model_id=model_source.model_scope_model_id,
-            model_scope_file_path=model_source.model_scope_file_path,
-            local_path=model_source.local_path,
+            **model_source.source_create_fields(),
+            **extra,
             state=ModelFileStateEnum.DOWNLOADING,
             worker_id=worker_id,
             source_index=model_source.model_source_index,
@@ -5394,6 +5381,109 @@ class InferenceBackendController:
                 )
 
 
+async def _maybe_enqueue_auto_archive(file: ModelFile) -> None:
+    """Queue an independent TOS archive after a Hub download is READY.
+
+    Archive failures never change ModelFile.state; READY cache stays READY.
+    """
+    from gpustack.schemas.tos import TosArchiveStateEnum, TosConnection
+    from gpustack.server.tos_bindings import (
+        auto_archive_spec,
+        enqueue_archive_job,
+    )
+
+    spec = auto_archive_spec(file)
+    if not spec or not spec.get("enabled"):
+        return
+    if file.state != ModelFileStateEnum.READY:
+        return
+    if file.archive_state in (
+        TosArchiveStateEnum.QUEUED.value,
+        TosArchiveStateEnum.UPLOADING.value,
+        TosArchiveStateEnum.VERIFYING.value,
+        TosArchiveStateEnum.READY.value,
+    ):
+        return
+    connection_id = spec.get("connection_id")
+    tos_model = spec.get("tos_model")
+    tos_version = spec.get("tos_version")
+    if not connection_id or not tos_model or not tos_version:
+        logger.warning(
+            "auto_archive on model file %s is missing connection_id/tos_model/tos_version",
+            file.id,
+        )
+        return
+    try:
+        async with async_session() as session:
+            current = await ModelFile.one_by_id(session, file.id)
+            if not current or current.state != ModelFileStateEnum.READY:
+                return
+            connection = await TosConnection.one_by_id(session, connection_id)
+            if not connection or connection.deleted_at is not None:
+                current.archive_state = TosArchiveStateEnum.ERROR.value
+                current.archive_error_code = "connection_not_found"
+                current.archive_error_message = "auto_archive connection is missing"
+                await current.update(session)
+                return
+            from gpustack.api.exceptions import ForbiddenException
+            from gpustack.utils.tos_credentials import assert_connection_owned_by
+
+            try:
+                assert_connection_owned_by(connection, current.owner_principal_id)
+            except ForbiddenException:
+                current.archive_state = TosArchiveStateEnum.ERROR.value
+                current.archive_error_code = "connection_not_found"
+                current.archive_error_message = (
+                    "auto_archive connection is not owned by this organization"
+                )
+                await current.update(session)
+                return
+            await enqueue_archive_job(
+                session,
+                current,
+                connection,
+                tos_model,
+                tos_version,
+                paths=spec.get("paths"),
+            )
+            await session.commit()
+    except Exception as exc:
+        from gpustack.api.exceptions import AlreadyExistsException
+
+        if isinstance(exc, AlreadyExistsException):
+            details = getattr(exc, "details", None) or {}
+            if details.get("error_code") == "version_retry_required":
+                logger.info(
+                    "auto_archive for model file %s needs retry of job %s",
+                    file.id,
+                    details.get("retry_job_id"),
+                )
+            else:
+                logger.info(
+                    "auto_archive for model file %s hit an existing version: %s",
+                    file.id,
+                    exc,
+                )
+            return
+        logger.error(
+            "Failed to enqueue auto_archive for model file %s: %s", file.id, exc
+        )
+        try:
+            async with async_session() as session:
+                current = await ModelFile.one_by_id(session, file.id)
+                if not current:
+                    return
+                current.archive_state = TosArchiveStateEnum.ERROR.value
+                current.archive_error_message = str(exc)
+                if current.state != ModelFileStateEnum.READY:
+                    current.state = ModelFileStateEnum.READY
+                await current.update(session)
+        except Exception:
+            logger.exception(
+                "Failed to record auto_archive error for model file %s", file.id
+            )
+
+
 class ModelFileController:
     """
     Model file controller syncs the model file download status to related model instances.
@@ -5428,6 +5518,8 @@ class ModelFileController:
             if not file:
                 # In case the file is deleted
                 return
+
+            await _maybe_enqueue_auto_archive(file)
 
             for instance in file.instances + file.draft_instances:
                 async with async_session() as session:

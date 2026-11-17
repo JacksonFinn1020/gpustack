@@ -65,6 +65,10 @@ GPUStack の `Models - Deployments` ページで、モデルのデプロイを�
 
 8. `Save` ボタンをクリックします。
 
+### TOS モデルのデプロイ { #deploying-a-tos-model }
+
+TOS は優先経路です。server で `gpustack tos-ingest` または `POST /v2/tos/releases`（`/tos-deploy` の Source=TOS）により `manifest.json` + `objects/<sha256>/…` を公開し、worker と GPU を選ぶと、割り当てられた **worker** が SHA256 検証してからローカルパスで起動します。認証は server/worker の `TOS_ACCESS_KEY` / `TOS_SECRET_KEY`。`pip install tos` が必要です（wheel の必須依存ではありません）。`POST /v2/models`、`source: tos`。HF / ModelScope / `local_path` はそのまま使えます。
+
 ### バックエンド { #backend }
 
 現在、GPUStack は組み込みバックエンドとして vLLM、SGLang、MindIE、VoxBox をサポートしています。
