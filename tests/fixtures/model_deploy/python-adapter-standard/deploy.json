@@ -1,0 +1,41 @@
+{
+  "source": {
+    "repo": "/data/src/laya-standard",
+    "model_dir": "/data/src/laya-standard/weights",
+    "ref": "HEAD"
+  },
+  "storage": {
+    "provider": "tos",
+    "endpoint": "https://tos.example.com",
+    "region": "cn-example",
+    "bucket": "example-models",
+    "prefix": "lingji-models/releases",
+    "release_path": null
+  },
+  "registry": {
+    "host": "registry.example.com",
+    "namespace": "example"
+  },
+  "server": {
+    "host": "gpu-server.example.com",
+    "user": "model-deploy",
+    "port": 22,
+    "python": "python3",
+    "model_root": "/data/models",
+    "state_root": "/data/models/.deploy-state"
+  },
+  "runtime": {
+    "gpus": "0",
+    "bind_host": "0.0.0.0",
+    "health_timeout": 900,
+    "shm_size": "2g",
+    "environment": {},
+    "command": [],
+    "container_name": "lingji-laya-standard",
+    "host_port": 9740,
+    "security_profile": "restricted",
+    "gpu_min_free_memory_mb": 1024,
+    "gpu_lock_root": "/var/lock/lingji-deploy-gpus"
+  },
+  "catalog_file": "model-catalog.json"
+}

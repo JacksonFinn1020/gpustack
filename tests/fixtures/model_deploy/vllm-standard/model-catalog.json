@@ -1,0 +1,26 @@
+{
+  "vllm-standard": {
+    "branch": "origin/vllm-standard",
+    "dockerfile": "Dockerfile",
+    "container_port": 8000,
+    "container_model_path": "/data/model",
+    "health_path": "/v1/models",
+    "health_expect_json": {
+      "object": "list"
+    },
+    "health_require_nonempty_data": true,
+    "environment": {
+      "MODEL_PATH": "/data/model",
+      "MODEL_NAME": "vllm-standard",
+      "SERVICE_HOST": "0.0.0.0",
+      "SERVICE_PORT": "8000",
+      "MODEL_DEVICE": "cuda:0",
+      "HF_HUB_OFFLINE": "1",
+      "TRANSFORMERS_OFFLINE": "1"
+    },
+    "required_files": [
+      "config.json"
+    ],
+    "security_profile": "restricted"
+  }
+}

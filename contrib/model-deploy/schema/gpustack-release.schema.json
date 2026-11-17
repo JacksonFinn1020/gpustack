@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/gpustack/gpustack/contrib/model-deploy/schema/gpustack-release.schema.json",
+  "title": "GPUStack model-deploy release bridge",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "source_kind", "model_deploy", "model_create"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "source_kind": { "type": "string", "const": "model-deploy" },
+    "model_deploy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "version", "runtime"],
+      "properties": {
+        "model": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "runtime": { "type": "string", "minLength": 1 },
+        "served_model_name": { "type": "string" },
+        "model_root": { "type": "string" },
+        "physical_gpus": { "type": "string" }
+      }
+    },
+    "model_create": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "source", "local_path", "backend"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "const": "local_path" },
+        "local_path": { "type": "string", "minLength": 1 },
+        "backend": { "type": "string", "enum": ["vLLM", "SGLang"] },
+        "backend_parameters": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "replicas": { "type": "integer", "minimum": 0 },
+        "gpu_selector": {
+          "type": "object",
+          "properties": {
+            "gpu_ids": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "gpus_per_replica": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "categories": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "enable_model_route": { "type": "boolean" },
+        "description": { "type": "string" },
+        "cluster_name": { "type": "string" }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "health_path": { "type": "string" },
+        "health_expect_json": { "type": "object" },
+        "health_require_nonempty_data": { "type": "boolean" }
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "laya-standard": {
+    "runtime": "python-adapter",
+    "branch": "origin/laya-standard",
+    "dockerfile": "Dockerfile",
+    "container_port": 9740,
+    "container_model_path": "/data/model",
+    "health_path": "/health/ready",
+    "health_expect_json": {
+      "status": "ok",
+      "model_loaded": true
+    },
+    "health_require_nonempty_data": false,
+    "environment": {
+      "MODEL_PATH": "/data/model",
+      "MODEL_NAME": "laya-standard",
+      "SERVICE_HOST": "0.0.0.0",
+      "SERVICE_PORT": "9740",
+      "MODEL_DEVICE": "cuda:0",
+      "HF_HUB_OFFLINE": "1",
+      "TRANSFORMERS_OFFLINE": "1"
+    },
+    "required_files": [],
+    "security_profile": "restricted"
+  }
+}
