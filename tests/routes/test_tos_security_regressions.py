@@ -372,3 +372,64 @@ async def test_catalog_fills_manifest_or_marks_unknown(monkeypatch):
     broken = by_version[("broken", "v1")]
     assert broken.catalog_verified is False
     assert broken.gguf is None
+
+
+@pytest.mark.asyncio
+async def test_stamp_and_detail_accept_directory_package(monkeypatch):
+    conn = _org_connection(10, 4, "SK-A", monkeypatch)
+    objects = {
+        "org-10/react/laya/configuration.json": b"cfg",
+        "org-10/react/laya/model.safetensors": b"weights",
+        "org-10/react/laya/encoder/config.json": b"enc",
+    }
+    monkeypatch.setattr(
+        "gpustack.server.tos_bindings.client_from_access",
+        lambda access: FakeTos(objects),
+    )
+    monkeypatch.setattr(TosConnection, "one_by_id", AsyncMock(return_value=conn))
+    model = Model(
+        name="laya-tos",
+        source=SourceEnum.TOS,
+        tos_connection_id=4,
+        tos_endpoint="https://tos-cn-beijing.volces.com",
+        tos_region="cn-beijing",
+        tos_bucket="weights",
+        tos_model="react/laya",
+        tos_version="dir",
+        owner_principal_id=10,
+        backend=BackendEnum.CUSTOM,
+    )
+    await stamp_tos_provenance_from_manifest(AsyncMock(), model, owner_principal_id=10)
+    assert model.provenance["package_kind"] == "directory"
+    assert model.provenance["object_count"] == 3
+    assert model.provenance["gguf"] is False
+    assert "manifest_sha256" not in model.provenance
+    assert model.provenance["artifact_uri"] == "tos://weights/org-10/react/laya"
+
+    monkeypatch.setattr(
+        tos_archives, "load_visible_connection", AsyncMock(return_value=conn)
+    )
+    monkeypatch.setattr(
+        tos_archives, "_sdk_client", lambda connection: FakeTos(objects)
+    )
+    ctx = TenantContext(
+        user=SimpleNamespace(kind=PrincipalType.USER),
+        is_platform_admin=False,
+        current_principal_id=10,
+        org_role=None,
+    )
+    detail = await tos_archives.get_release_detail(
+        AsyncMock(),
+        ctx,
+        connection_id=4,
+        tos_model="react/laya",
+        tos_version="dir",
+    )
+    assert detail.artifact_uri == "tos://weights/org-10/react/laya"
+    assert detail.schema_version is None
+    assert [item.path for item in detail.files] == [
+        "configuration.json",
+        "encoder/config.json",
+        "model.safetensors",
+    ]
+    assert detail.total_bytes == len(b"cfg") + len(b"weights") + len(b"enc")

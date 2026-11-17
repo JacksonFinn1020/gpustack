@@ -351,7 +351,7 @@ async def list_release_catalog(
     prefix = normalize_prefix(connection.prefix)
     try:
         client = _sdk_client(connection)
-        listed = tos_storage.list_releases(client, connection.bucket, prefix)
+        listed = tos_storage.list_catalog_entries(client, connection.bucket, prefix)
     except tos_storage.TosStorageError as exc:
         raise InvalidException(
             message=str(exc),
@@ -361,11 +361,13 @@ async def list_release_catalog(
     for entry in listed:
         if tos_model and entry["tos_model"] != tos_model:
             continue
+        kind = entry.get("kind") or "release"
+        version_for_uri = "" if kind == "directory" else entry["tos_version"]
         uri = artifact_uri(
             connection.bucket,
             prefix,
             entry["tos_model"],
-            entry["tos_version"],
+            version_for_uri,
         )
         item = TosReleaseListItem(
             connection_id=connection.id,
@@ -374,6 +376,9 @@ async def list_release_catalog(
             artifact_uri=uri,
             catalog_verified=False,
         )
+        if kind == "directory":
+            items.append(item)
+            continue
         try:
             location = tos_storage.TosLocation(
                 endpoint=connection.endpoint,
@@ -421,12 +426,36 @@ async def get_release_detail(
                 tos_model, tos_version, prefix=prefix
             ),
         )
-        if not object_key_in_prefix(prefix, location.manifest_key):
+        if not object_key_in_prefix(prefix, location.release_path):
             raise InvalidException(
                 message="release is outside the connection prefix",
                 details={"error_code": TosArchiveErrorCode.PREFIX_DENIED.value},
             )
         client = _sdk_client(connection)
+        if tos_storage.is_directory_package(location):
+            listed = tos_storage.list_directory_package_files(location, client)
+            files = [
+                TosReleaseFilePublic(path=entry["path"], size=entry["size"], sha256="")
+                for entry in listed
+            ]
+            return TosReleasePublic(
+                connection_id=connection.id,
+                bucket=connection.bucket,
+                prefix=prefix,
+                tos_model=tos_model,
+                tos_version=tos_version,
+                artifact_uri=location.uri,
+                schema_version=None,
+                files=files,
+                total_bytes=tos_storage.directory_total_size(listed),
+                gguf=looks_gguf([f.path for f in files]),
+                backend_hint=None,
+            )
+        if not object_key_in_prefix(prefix, location.manifest_key):
+            raise InvalidException(
+                message="release is outside the connection prefix",
+                details={"error_code": TosArchiveErrorCode.PREFIX_DENIED.value},
+            )
         manifest = tos_storage.fetch_manifest(location, client)
     except tos_storage.TosStorageError as exc:
         raise InvalidException(

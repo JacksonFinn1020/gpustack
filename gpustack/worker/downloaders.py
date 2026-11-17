@@ -414,6 +414,8 @@ class TosDownloader:
         from gpustack.utils.tos_credentials import client_for_source
 
         client = client_for_source(model, client)
+        if tos_storage.is_directory_package(location):
+            return tos_storage.directory_file_entries(location, client)
         manifest = tos_storage.fetch_manifest(location, client)
         return tos_storage.manifest_file_entries(manifest)
 
@@ -442,15 +444,19 @@ class TosDownloader:
         with HeartbeatSoftFileLock(
             lock_filename, owner_worker_id=getattr(model, "worker_id", None)
         ):
-            paths = tos_storage.download_release(
+            paths = tos_storage.download_package(
                 location,
                 destination,
                 client,
                 progress_callback=progress_callback,
             )
         logger.info(f"Downloaded TOS release {location.uri}")
-        manifest = tos_storage.fetch_manifest(location, client)
-        stamped = tos_storage.provenance_from_manifest(manifest, location)
+        if tos_storage.is_directory_package(location):
+            listed = tos_storage.list_directory_package_files(location, client)
+            stamped = tos_storage.provenance_from_directory(location, listed)
+        else:
+            manifest = tos_storage.fetch_manifest(location, client)
+            stamped = tos_storage.provenance_from_manifest(manifest, location)
         if hasattr(model, "provenance"):
             current = dict(model.provenance or {})
             current.update(stamped)

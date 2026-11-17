@@ -97,6 +97,16 @@ class FakeTos:
         marker = prefix or ""
         return [key for key in self.objects if key.startswith(marker)]
 
+    def list_object_infos(self, bucket: str, prefix: str):
+        marker = prefix or ""
+        infos = []
+        for key, content in self.objects.items():
+            if not key.startswith(marker):
+                continue
+            size = len(content) if isinstance(content, (bytes, bytearray)) else 0
+            infos.append((key, size))
+        return infos
+
     def object_digest(self, bucket: str, key: str):
         data = self.get_object_bytes(bucket, key)
         return _sha(data), len(data)
@@ -415,6 +425,150 @@ def test_list_releases_stays_inside_prefix():
     assert all(item["tos_model"] != "other-prefix/qwen3" for item in listed)
 
 
+def test_list_catalog_entries_includes_hf_and_weight_dirs():
+    # Mirrors the ljyd-algorithm/lingji-models/ layout: manifest releases
+    # under releases/, plus HF-style and weight-only repositories, and a
+    # media dataset that must stay out of the dropdown.
+    sha = "ab" * 32
+    objects = {
+        "lingji-models/DeepSeek-OCR/config.json": b"{}",
+        "lingji-models/DeepSeek-OCR/model.safetensors": b"w",
+        "lingji-models/DeepSeek-OCR-2/config.json": b"{}",
+        "lingji-models/DeepSeek-OCR-2/model-00001-of-00001.safetensors": b"w",
+        (
+            "lingji-models/asr/asr-v0.1/"
+            "punc_ct-transformer_zh-cn-common-vocab272727-pytorch/config.yaml"
+        ): b"x",
+        (
+            "lingji-models/asr/asr-v0.1/"
+            "punc_ct-transformer_zh-cn-common-vocab272727-pytorch/model.pt"
+        ): b"w",
+        (
+            "lingji-models/asr/asr-v0.1/"
+            "speech_fsmn_vad_zh-cn-16k-common-pytorch/config.yaml"
+        ): b"x",
+        (
+            "lingji-models/asr/asr-v0.1/"
+            "speech_fsmn_vad_zh-cn-16k-common-pytorch/model.pt"
+        ): b"w",
+        (
+            "lingji-models/asr/asr-v0.1/"
+            "speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch/"
+            "config.yaml"
+        ): b"x",
+        (
+            "lingji-models/asr/asr-v0.1/"
+            "speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch/"
+            "model.pt"
+        ): b"w",
+        "lingji-models/bert/bert-20251209/en/config.json": b"{}",
+        "lingji-models/bert/bert-20251209/en/pytorch_model.bin": b"w",
+        "lingji-models/bert/bert-20251209/zh/config.json": b"{}",
+        "lingji-models/bert/bert-20251209/zh/pytorch_model.bin": b"w",
+        "lingji-models/bert/roberta-base/config.json": b"{}",
+        "lingji-models/bert/roberta-base/pytorch_model.bin": b"w",
+        "lingji-models/cv_models/D-FINE_Model/model.pth": b"w",
+        "lingji-models/cv_models/ResNest101_Model/weights.bin": b"w",
+        "lingji-models/cy_model/best.pt": b"w",
+        "lingji-models/cy_model/best_cut_320_k3.onnx": b"w",
+        "lingji-models/cy_model/v5n_relu_3cls/args.yaml": b"x",
+        "lingji-models/cy_model/v5n_relu_3cls/best_cut_320_3cls.onnx": b"w",
+        "lingji-models/cy_model/v5n_relu_3cls/results.csv": b"x",
+        "lingji-models/cy_model/v5n_relu_3cls/weights/best.pt": b"w",
+        "lingji-models/cy_model/v5n_relu_3cls/weights/last.pt": b"w",
+        "lingji-models/cy_model/WFLW/images/0001.jpg": b"i",
+        "lingji-models/cy_model/WFLW/images/0002.png": b"i",
+        "lingji-models/cy_model/WFLW/annotations.json": b"[]",
+        "lingji-models/embeddings/vllm-qwen-embedding-0.6b/config.json": b"{}",
+        "lingji-models/embeddings/vllm-qwen-embedding-0.6b/model.safetensors": b"w",
+        "lingji-models/llm/llm-qwen3-8b/config.json": b"{}",
+        "lingji-models/llm/llm-qwen3-8b/model.safetensors": b"w",
+        "lingji-models/react/laya/README.md": b"x",
+        "lingji-models/react/laya/configuration.json": b"{}",
+        "lingji-models/react/laya/model.safetensors": b"w",
+        "lingji-models/react/laya/rl_agent_config.json": b"{}",
+        "lingji-models/react/laya/encoder/config.json": b"{}",
+        "lingji-models/react/laya/tokenizer/tokenizer.json": b"{}",
+        "lingji-models/react/laya/tokenizer/tokenizer_config.json": b"{}",
+        "lingji-models/react/laya/multilingual/model.safetensors": b"w",
+        "lingji-models/react/laya/multilingual/rl_agent_config.json": b"{}",
+        "lingji-models/react/laya/multilingual/encoder/config.json": b"{}",
+        "lingji-models/react/laya/multilingual/tokenizer/tokenizer.json": b"{}",
+        "lingji-models/react/laya/typed-decisions/model.safetensors": b"w",
+        "lingji-models/react/laya/typed-decisions/rl_agent_config.json": b"{}",
+        "lingji-models/react/laya/typed-decisions/encoder/config.json": b"{}",
+        "lingji-models/react/laya/typed-decisions/tokenizer/tokenizer.json": b"{}",
+        "lingji-models/releases/joint-bert-crf/v1/manifest.json": b"{}",
+        f"lingji-models/releases/joint-bert-crf/v1/objects/{sha}/weights.bin": b"w",
+        "lingji-models/releases/tiny-gpt2/v1/manifest.json": b"{}",
+        "lingji-models/releases/vllm-qwen-embedding-0.6b/v1/manifest.json": b"{}",
+        "other-prefix/should-not-appear/config.json": b"{}",
+        "other-prefix/should-not-appear/model.safetensors": b"w",
+    }
+    listed = tos_storage.list_catalog_entries(
+        FakeTos(objects), "ljyd-algorithm", "lingji-models"
+    )
+    models = {item["tos_model"] for item in listed}
+    expected = {
+        "DeepSeek-OCR",
+        "DeepSeek-OCR-2",
+        "asr/asr-v0.1/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
+        "asr/asr-v0.1/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+        "asr/asr-v0.1/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+        "bert/bert-20251209/en",
+        "bert/bert-20251209/zh",
+        "bert/roberta-base",
+        "cv_models/D-FINE_Model",
+        "cv_models/ResNest101_Model",
+        "cy_model",
+        "cy_model/v5n_relu_3cls",
+        "embeddings/vllm-qwen-embedding-0.6b",
+        "llm/llm-qwen3-8b",
+        "react/laya",
+        "releases/joint-bert-crf",
+        "releases/tiny-gpt2",
+        "releases/vllm-qwen-embedding-0.6b",
+    }
+    assert models == expected
+    assert [
+        item["tos_model"] for item in listed if item["tos_model"] == "react/laya"
+    ] == ["react/laya"]
+    laya_internal = {name for name in models if name.startswith("react/laya/")}
+    assert laya_internal == set()
+    assert "cy_model/v5n_relu_3cls/weights" not in models
+    assert "cy_model/WFLW" not in models
+    assert "asr" not in models
+    assert "asr/asr-v0.1" not in models
+    assert "bert" not in models
+    assert "bert/bert-20251209" not in models
+    assert "releases" not in models
+    assert "should-not-appear" not in models
+    # Manifest releases keep their real versions; directory models use the sentinel.
+    by_model = {item["tos_model"]: item for item in listed}
+    assert by_model["releases/tiny-gpt2"]["tos_version"] == "v1"
+    assert by_model["releases/tiny-gpt2"]["kind"] == "release"
+    assert (
+        by_model["DeepSeek-OCR"]["tos_version"] == tos_storage.DIRECTORY_LISTING_VERSION
+    )
+    assert by_model["DeepSeek-OCR"]["kind"] == "directory"
+    # The published releases/ copy must not hide the HF embeddings repo.
+    versions = {(item["tos_model"], item["tos_version"]) for item in listed}
+    assert ("releases/vllm-qwen-embedding-0.6b", "v1") in versions
+    assert (
+        "embeddings/vllm-qwen-embedding-0.6b",
+        tos_storage.DIRECTORY_LISTING_VERSION,
+    ) in versions
+
+
+def test_list_releases_still_requires_manifest_layout():
+    objects = {
+        "lingji-models/DeepSeek-OCR/config.json": b"{}",
+        "lingji-models/releases/tiny-gpt2/v1/manifest.json": b"{}",
+    }
+    listed = tos_storage.list_releases(FakeTos(objects), "models", "lingji-models")
+    assert listed == [{"tos_model": "releases/tiny-gpt2", "tos_version": "v1"}]
+
+
 def test_model_id_allows_org_slash_name():
     path = tos_storage.resolve_release_path(
         "meta/llama-3-8b", "v1", prefix="org-a/models"
@@ -451,3 +605,106 @@ def test_upload_rejects_path_escape(tmp_path):
         tos_storage.upload_release(
             location, src, FakeTos({}), relatives=["../secret.bin"]
         )
+
+
+def test_resolve_directory_listing_omits_sentinel_version():
+    assert (
+        tos_storage.resolve_release_path("react/laya", "dir", prefix="lingji-models")
+        == "lingji-models/react/laya"
+    )
+    assert (
+        tos_storage.resolve_release_path(
+            "releases/tiny-gpt2", "v1", prefix="lingji-models"
+        )
+        == "lingji-models/releases/tiny-gpt2/v1"
+    )
+    location = _location(
+        model="react/laya",
+        version="dir",
+        release_path=tos_storage.resolve_release_path(
+            "react/laya", "dir", prefix="lingji-models"
+        ),
+    )
+    assert tos_storage.is_directory_package(location)
+    assert location.uri == "tos://models/lingji-models/react/laya"
+
+
+def test_download_directory_pulls_entire_root(tmp_path):
+    location = _location(
+        model="react/laya",
+        version="dir",
+        release_path="lingji-models/react/laya",
+    )
+    objects = {
+        "lingji-models/react/laya/configuration.json": b"cfg",
+        "lingji-models/react/laya/model.safetensors": b"weights",
+        "lingji-models/react/laya/encoder/config.json": b"enc",
+        "lingji-models/react/laya/": b"",
+        "lingji-models/react/laya/.tos-tmp/partial": b"tmp",
+        "lingji-models/react/laya-other/model.bin": b"not-in-package",
+    }
+    dest = tmp_path / "laya"
+    client = FakeTos(objects)
+    paths = tos_storage.download_package(location, dest, client)
+    assert paths == [str(dest.absolute())]
+    assert (dest / "configuration.json").read_bytes() == b"cfg"
+    assert (dest / "model.safetensors").read_bytes() == b"weights"
+    assert (dest / "encoder" / "config.json").read_bytes() == b"enc"
+    assert not (dest / "model.bin").exists()
+    assert not (dest / ".tos-tmp" / "partial").exists()
+    listed = tos_storage.list_directory_package_files(location, client)
+    assert [entry["path"] for entry in listed] == [
+        "configuration.json",
+        "encoder/config.json",
+        "model.safetensors",
+    ]
+    # Second pull is a no-op once the inventory marker matches.
+    again = tos_storage.download_package(location, dest, client)
+    assert again == paths
+
+
+def test_tos_downloader_directory_uses_root_not_manifest(tmp_path):
+    model = _tos_source(
+        tos_model="react/laya",
+        tos_version="dir",
+        tos_release_path="lingji-models/react/laya",
+    )
+    objects = {
+        "lingji-models/react/laya/configuration.json": b"cfg",
+        "lingji-models/react/laya/weights/model.safetensors": b"weights",
+    }
+    client = FakeTos(objects)
+    entries = downloaders.TosDownloader.get_model_file_info(model, client=client)
+    assert {entry.rfilename for entry in entries} == {
+        "configuration.json",
+        "weights/model.safetensors",
+    }
+    dest = tmp_path / "pkg"
+    paths = downloaders.TosDownloader.download(model, local_dir=dest, client=client)
+    assert paths == [str(dest.absolute())]
+    assert (dest / "configuration.json").read_bytes() == b"cfg"
+    assert (dest / "weights" / "model.safetensors").read_bytes() == b"weights"
+    assert not (dest / "manifest.json").exists()
+
+
+def test_validate_manifest_accepts_releases_prefix_catalog_id():
+    location = _location(
+        model="releases/tiny-gpt2",
+        version="v1",
+        release_path="lingji-models/releases/tiny-gpt2/v1",
+    )
+    content = b"weights"
+    files = [_file_entry("weights.bin", content, location.release_path)]
+    manifest = _manifest(location, files)
+    manifest["model"] = "tiny-gpt2"
+    validated = tos_storage.validate_manifest(manifest, location)
+    assert validated["model"] == "tiny-gpt2"
+    client = FakeTos(
+        {
+            location.manifest_key: tos_storage.manifest_bytes(manifest),
+            files[0]["object_key"]: content,
+        }
+    )
+    fetched = tos_storage.fetch_manifest(location, client)
+    assert fetched["version"] == "v1"
+    assert [entry["path"] for entry in fetched["files"]] == ["weights.bin"]

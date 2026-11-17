@@ -372,15 +372,22 @@ async def stamp_tos_provenance_from_manifest(
         client = client_from_access(access)
         location = tos_storage.location_from_source(model_in)
     try:
-        manifest = tos_storage.fetch_manifest(location, client)
+        if tos_storage.is_directory_package(location):
+            listed = tos_storage.list_directory_package_files(location, client)
+            stamped = tos_storage.provenance_from_directory(location, listed)
+        else:
+            manifest = tos_storage.fetch_manifest(location, client)
+            stamped = tos_storage.provenance_from_manifest(manifest, location)
     except tos_storage.TosStorageError as exc:
+        if tos_storage.is_directory_package(location):
+            raise InvalidException(
+                message="TOS directory package is unreadable or empty",
+                details={"error_code": TosArchiveErrorCode.MANIFEST_MISMATCH.value},
+            ) from exc
         raise InvalidException(
             message="TOS deploy requires a readable trusted manifest",
             details={"error_code": TosArchiveErrorCode.MANIFEST_MISMATCH.value},
         ) from exc
-    from gpustack.worker.tos_storage import provenance_from_manifest
-
-    stamped = provenance_from_manifest(manifest, location)
     current = dict(getattr(model_in, "provenance", None) or {})
     current.update(stamped)
     model_in.provenance = current
