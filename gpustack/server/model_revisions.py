@@ -24,6 +24,8 @@ REVISION_FIELDS = (
     "tos_model",
     "tos_version",
     "tos_release_path",
+    "tos_connection_id",
+    "auto_archive",
     "replicas",
     "categories",
     "placement_strategy",
